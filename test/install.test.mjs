@@ -4,7 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { test } from "node:test";
 import YAML from "yaml";
-import { INSTALL, REPO, seedUserContent, sandbox, snapshot } from "./helpers.mjs";
+import { INSTALL, INTERNAL, REPO, seedUserContent, sandbox, snapshot, withoutKeyRefs } from "./helpers.mjs";
 
 const OURS = JSON.parse(fs.readFileSync(path.join(REPO, "config", "deny-patterns.json"), "utf8"));
 const DENY = OURS.filter((e) => e.approval === "deny");
@@ -92,17 +92,53 @@ test("dry-run install and dry-run uninstall write nothing", (t) => {
   const s = sandbox(t);
   seedUserContent(s);
   const before = snapshot(s.home);
-  const dry = s.sn([...INSTALL, "--dry-run"]);
+  const dry = s.sn([...INSTALL, "--dry-run", "--verbose"]);
   assert.equal(dry.code, 0, dry.out);
   assert.match(dry.out, /set tools\.approvalMode: \(absent\) -> "write"/);
   assert.deepEqual(snapshot(s.home), before);
 
   assert.equal(s.sn(INSTALL).code, 0);
   const installed = snapshot(s.home);
-  const plan = s.sn(["uninstall", "--dry-run"]);
+  const plan = s.sn(["uninstall", "--dry-run", "--verbose"]);
   assert.equal(plan.code, 0);
   assert.match(plan.out, /restore .*config\.yml from backup/);
+  assert.match(plan.out, /restore your previous settings in ~\/\.omp\/agent\/config\.yml/);
   assert.deepEqual(snapshot(s.home), installed);
+});
+
+test("default output is a short plain summary; --verbose adds every file and key", (t) => {
+  const s = sandbox(t);
+  seedUserContent(s);
+  const internal = new RegExp(`${INTERNAL.source}|\\x1b\\[`);
+  const dry = s.sn([...INSTALL, "--dry-run"]);
+  assert.equal(dry.code, 0, dry.out);
+  assert.doesNotMatch(dry.out, internal);
+  assert.ok(!dry.out.includes(s.home), dry.out);
+  assert.match(dry.out, /Main model +sol - medium +writes the code/);
+  assert.match(dry.out, /Reviewers +big - high +different provider = better reviews/);
+  assert.match(dry.out, /- add 7 agents and 6 skills to OMP \(linked to /);
+  assert.match(dry.out, /- update ~\/\.omp\/agent\/config\.yml: model roles, 23 blocked commands, 5 allowed git commands, task settings, tool approval\n/);
+  assert.match(dry.out, /- add the SUPER-NEMO block to ~\/\.omp\/agent\/AGENTS\.md\n/);
+  assert.match(dry.out, /- add advisor guidance \(WATCHDOG\.md \/ WATCHDOG\.yml\)\n/);
+  assert.match(dry.out, /Backups of changed files: ~\/\.super-nemo\/state\/backups\/\S+\n/);
+  assert.match(dry.out, /Dry run: nothing was written\. Add --verbose for every file and setting\./);
+  const verbose = s.sn([...INSTALL, "--dry-run", "--verbose"]);
+  assert.match(verbose.out, /set modelRoles\.nemo-review: \(absent\) -> "alpha\/big:high"/);
+  assert.match(verbose.out, new RegExp(`link ${s.agentDir}/skills/super-nemo -> `));
+  assert.match(verbose.out, /set task\.agentModelOverrides\.task: \(absent\) -> "@default"/);
+  assert.doesNotMatch(verbose.out, /Add --verbose/);
+
+  const res = s.sn(INSTALL);
+  assert.equal(res.code, 0, res.out);
+  assert.doesNotMatch(res.out, internal);
+  assert.ok(!res.out.includes(s.home), res.out);
+  assert.match(res.out, /\nOK Linked agents and skills\nOK Updated OMP config\nOK Updated AGENTS\.md\nOK Added advisor guidance\nOK Checked installation\n/);
+  assert.match(res.out, /\nOK SUPER-NEMO is installed\.\n {2}Next: open a NEW omp session in a repo and ask it to change some code\.\n/);
+  for (const cmd of [["status"], ["verify"], ["uninstall"]]) {
+    const out = s.sn(cmd).out;
+    assert.doesNotMatch(out, internal, cmd[0]);
+    assert.ok(!out.includes(s.home), `${cmd[0]}: ${out}`);
+  }
 });
 
 test("an existing regular file at a target aborts before any write", (t) => {
@@ -189,13 +225,13 @@ test("verify passes after install and each skill resolves to the installed copy"
   assert.equal(s.sn(INSTALL).code, 0);
   const res = s.sn(["verify"]);
   assert.equal(res.code, 0, res.out);
-  assert.match(res.out, /verify: OK/);
+  assert.match(res.out, /^OK Installation OK$/m);
   assert.doesNotMatch(res.out, /returns a different copy/);
 
   fs.unlinkSync(path.join(s.agentDir, "skills", "nemo-qa-review"));
   const broken = s.sn(["verify"]);
   assert.equal(broken.code, 1);
-  assert.match(broken.out, /skills\/nemo-qa-review is not a symlink/);
+  assert.match(broken.out, /^x .*skills\/nemo-qa-review is not a symlink/m);
   assert.match(broken.out, /omp read skill:\/\/nemo-qa-review failed/);
 });
 
@@ -207,7 +243,7 @@ test("verify fails when a user rule is moved in front of our deny rules", (t) =>
   s.write("config.yml", doc.toString());
   const res = s.sn(["verify"]);
   assert.equal(res.code, 1);
-  assert.match(res.out, /\{"match":"\*","approval":"allow"\} comes before SUPER-NEMO's deny rules/);
+  assert.match(res.out, /^x Blocked commands: the rule "\*" \(allow\) comes before SUPER-NEMO's deny rules and can override them \(first match wins\) \(config\.yml: bash\.patterns\)$/m);
 });
 
 test("verify fails when one of our own allow rules is moved in front of our deny rules", (t) => {
@@ -220,7 +256,7 @@ test("verify fails when one of our own allow rules is moved in front of our deny
   s.write("config.yml", doc.toString());
   const res = s.sn(["verify"]);
   assert.equal(res.code, 1);
-  assert.match(res.out, /\{"match":"git diff\*","approval":"allow"\} comes before SUPER-NEMO's deny rules/);
+  assert.match(res.out, /^x Blocked commands: the rule "git diff\*" \(allow\) comes before SUPER-NEMO's deny rules/m);
 });
 
 test("verify fails when omp lists no models", (t) => {
@@ -231,6 +267,48 @@ test("verify fails when omp lists no models", (t) => {
   const res = s.sn(["verify"], { SN_MODELS_JSON: empty });
   assert.equal(res.code, 1);
   assert.match(res.out, /no available models; run `omp login`/);
+});
+
+test("verify names an unavailable chosen model and an overridden setting in plain words", (t) => {
+  const s = sandbox(t);
+  assert.equal(s.sn(INSTALL).code, 0);
+  const fewer = path.join(s.home, "fewer-models.json");
+  const all = JSON.parse(fs.readFileSync(s.env.SN_MODELS_JSON, "utf8")).models;
+  fs.writeFileSync(fewer, JSON.stringify({ models: all.filter((m) => m.selector !== "beta/sol") }));
+  const gone = s.sn(["verify"], { SN_MODELS_JSON: fewer });
+  assert.equal(gone.code, 1, gone.out);
+  assert.match(gone.out, /^x Reviewers: sol - high is not in OMP's model list any more; log in to its provider or pick another model with sn install \(config\.yml: modelRoles\.nemo-review\)$/m);
+  assert.doesNotMatch(withoutKeyRefs(gone.out), INTERNAL);
+
+  const bin = path.join(s.home, "bin");
+  fs.mkdirSync(bin);
+  const real = spawnSync("bash", ["-c", "command -v omp"], { encoding: "utf8" }).stdout.trim();
+  fs.writeFileSync(path.join(bin, "omp"), [
+    "#!/bin/bash",
+    "if [ \"$1 $2 $3\" = \"config get tools.approvalMode\" ]; then echo '{\"value\":\"yolo\"}'; exit 0; fi",
+    `exec ${JSON.stringify(real)} "$@"`,
+  ].join("\n"), { mode: 0o755 });
+  const shadowed = s.sn(["verify"], { PATH: `${bin}:${process.env.PATH}` });
+  assert.equal(shadowed.code, 0, shadowed.out);
+  assert.match(shadowed.out, /^! Auto-approve: OMP uses on instead of off; a project config or environment setting overrides it \(config\.yml: tools\.approvalMode\)$/m);
+  assert.doesNotMatch(withoutKeyRefs(shadowed.out), INTERNAL);
+});
+
+test("uninstall says it restores a SUPER-NEMO block that was there before install", (t) => {
+  const s = sandbox(t);
+  const old = "<!-- super-nemo:begin -->\nmy older block\n<!-- super-nemo:end -->\n";
+  s.write("AGENTS.md", `# mine\n\n${old}`);
+  s.write("WATCHDOG.md", old);
+  const before = snapshot(s.home);
+  assert.equal(s.sn(INSTALL).code, 0);
+  const dry = s.sn(["uninstall", "--dry-run"]);
+  assert.equal(dry.code, 0, dry.out);
+  assert.match(dry.out, /^ {2}- restore your previous SUPER-NEMO block in ~\/\.omp\/agent\/AGENTS\.md$/m);
+  assert.match(dry.out, /^ {2}- restore your previous SUPER-NEMO block in ~\/\.omp\/agent\/WATCHDOG\.md$/m);
+  assert.match(dry.out, /^ {2}- remove advisor guidance \(WATCHDOG\.yml\)$/m);
+  assert.doesNotMatch(dry.out, /remove the SUPER-NEMO block/);
+  assert.equal(s.sn(["uninstall"]).code, 0);
+  assert.deepEqual(snapshot(s.home), before);
 });
 
 test("an existing config.yaml is edited in place and never shadowed by a new config.yml", (t) => {

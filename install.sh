@@ -2,6 +2,13 @@
 set -euo pipefail
 
 say() { printf 'super-nemo: %s\n' "$*" >&2; }
+progress() {
+  if [ -t 2 ] && [ -z "${NO_COLOR+x}" ] && [ "${TERM:-}" != dumb ]; then
+    printf '%s…\n' "$1" >&2
+  else
+    printf '%s...\n' "$1" >&2
+  fi
+}
 die() {
   say "$*"
   exit 1
@@ -95,7 +102,7 @@ fresh_clone() {
   local err
   tmp="$(mktemp -d "$home_real/.repo.XXXXXX")"
   tmp_id="$(identity "$tmp")"
-  say "cloning $(shown "$url") ($ref) into $clone"
+  progress "Downloading SUPER-NEMO"
   if ! err="$(git_net clone --quiet --depth 1 --branch "$ref" "$url" "$tmp" 2>&1 </dev/null)"; then
     [ -z "$err" ] || printf '%s\n' "$err" | redact >&2
     die "could not clone $(shown "$url")$access_hint"
@@ -116,6 +123,7 @@ existing_clone() {
   read -r state created <<<"$(manifest_clone)"
   case "$state" in
     installed)
+      progress "Updating SUPER-NEMO"
       if [ "$dry_run" = 1 ]; then
         "$clone/sn" update --pull-only --dry-run </dev/null
       else
@@ -200,9 +208,6 @@ main() {
   else
     "$clone/sn" install "$@" </dev/null
   fi
-  if [ "$dry_run" = 1 ]; then return 0; fi
-  say "update later with: $clone/sn update"
-  say "uninstall with:    $clone/sn uninstall"
 }
 
 main "$@"

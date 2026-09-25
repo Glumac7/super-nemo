@@ -1,10 +1,8 @@
 import assert from "node:assert/strict";
-import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
-import { ANONYMOUS, GH_HINT, GITHUB_URL, INSTALL, PRIVATE_HINT, REPO, VIA_GH, authServer, githubStyle, remote, sandbox, snapshot } from "./helpers.mjs";
+import { ANONYMOUS, GH_HINT, GITHUB_URL, INSTALL, PRIVATE_HINT, REPO, VIA_GH, authServer, githubStyle, remote, sandbox, snapshot, underPty } from "./helpers.mjs";
 
 const BOOT = ["--yes", "--no-smoke"];
 
@@ -22,7 +20,9 @@ test("bootstrap installs from a private-style remote, re-runs idempotently and u
 
   const res = await s.bootstrap(BOOT, { SN_REPO_URL: r.url });
   assert.equal(res.code, 0, res.out);
-  assert.match(res.out, /verify: OK/);
+  assert.match(res.out, /Checked installation/);
+  assert.match(res.out, /^Downloading SUPER-NEMO\.\.\.$/m);
+  assert.doesNotMatch(res.out, /cloning|update later with/);
   assert.ok(fs.lstatSync(s.clone).isDirectory());
   assert.equal(fs.readlinkSync(path.join(s.snHome, "current")), s.clone);
   assert.equal(fs.readlinkSync(path.join(s.agentDir, "skills", "super-nemo")), path.join(s.clone, "skills", "super-nemo"));
@@ -257,7 +257,7 @@ test("uninstall keeps a bootstrap clone with local changes or local commits and 
     assert.match(dry.out, reason, what);
     const un = s.run(path.join(s.clone, "sn"), ["uninstall"]);
     assert.equal(un.code, 0, `${what}: ${un.out}`);
-    assert.match(un.out, new RegExp(`kept ${s.clone}: .*${reason.source}`), what);
+    assert.match(un.out, new RegExp(`kept ~/\\.super-nemo/repo: .*${reason.source}`), what);
     assert.ok(fs.existsSync(path.join(s.clone, ".git")), what);
     assert.ok(!fs.existsSync(path.join(s.snHome, "state")), what);
   }
@@ -270,58 +270,25 @@ test("dry-run uninstall lists the clone removal and changes nothing", async (t) 
   const installed = snapshot(s.home);
   const dry = s.run(path.join(s.clone, "sn"), ["uninstall", "--dry-run"]);
   assert.equal(dry.code, 0, dry.out);
-  assert.match(dry.out, new RegExp(`remove ${s.clone} \\(the checkout the bootstrap installer created`));
+  assert.match(dry.out, /delete ~\/\.super-nemo\/repo\n/);
+  const detail = s.run(path.join(s.clone, "sn"), ["uninstall", "--dry-run", "--verbose"]);
+  assert.match(detail.out, new RegExp(`remove ${s.clone} \\(the checkout the bootstrap installer created`));
   assert.deepEqual(snapshot(s.home), installed);
 });
-
-function underPty(command, env, answer) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "sn-pty-"));
-  const fifo = path.join(dir, "keys");
-  spawnSync("mkfifo", [fifo]);
-  const inner = `${command}; echo "SN-PTY-EXIT=$?"`;
-  const pty = process.platform === "darwin" ? "script -q /dev/null bash -c \"$0\"" : "script -qec \"$0\" /dev/null";
-  const child = spawn("bash", ["-c", `cat "$1" | ${pty} 2>&1 | cat`, inner, fifo], { env, detached: true, stdio: ["ignore", "pipe", "pipe"] });
-  const keys = fs.createWriteStream(fifo);
-  let out = "";
-  let cursor = 0;
-  let code = null;
-  const onData = (d) => {
-    out += d;
-    for (;;) {
-      const m = /Choice \[\d+\]: |\[[yY]\/[nN]\] /.exec(out.slice(cursor));
-      if (!m) break;
-      const question = out.slice(cursor, cursor + m.index + m[0].length);
-      cursor += m.index + m[0].length;
-      keys.write(`${answer(question)}\r`);
-    }
-    const exit = /SN-PTY-EXIT=(\d+)/.exec(out);
-    if (exit && code === null) {
-      code = Number(exit[1]);
-      keys.end();
-    }
-  };
-  child.stdout.on("data", onData);
-  child.stderr.on("data", onData);
-  return new Promise((resolve) => {
-    const timer = setTimeout(() => process.kill(-child.pid, "SIGKILL"), 180_000);
-    child.on("close", () => {
-      clearTimeout(timer);
-      keys.end();
-      fs.rmSync(dir, { recursive: true, force: true });
-      resolve({ code, out });
-    });
-  });
-}
 
 test("prompts work when the bootstrap script arrives on stdin", async (t) => {
   const s = sandbox(t);
   const r = remote(t);
   const command = `cat ${JSON.stringify(path.join(REPO, "install.sh"))} | bash -s -- --no-smoke`;
-  const answer = (q) => (/Apply this plan/.test(q) ? "y" : /advisor for NORMAL|smoke evals/.test(q) ? "n" : "");
-  const { code, out } = await underPty(command, { ...s.env, SN_REPO_URL: r.url }, answer);
+  const plain = (q) => q.replace(/\x1b\[[0-9;]*m/g, "");
+  const answer = (q) => (/Use this setup\? \[Y\/n\/c=change\]/.test(plain(q)) ? "c" : /Advisor \(watches the coder\)/.test(plain(q)) ? "1" : "");
+  const { code, out, questions } = await underPty(command, { ...s.env, SN_REPO_URL: r.url }, answer);
   assert.equal(code, 0, out);
-  assert.match(out, /Apply this plan\?/);
-  assert.match(out, /Installed\./);
+  assert.match(questions.at(-2), /Apply\? \[Y\/n\] $/);
+  assert.match(questions.at(-1), /Run a quick live test\?.*\[y\/N\] $/);
+  assert.match(out, /SUPER-NEMO is installed\.\r?\n {2}Next: open a NEW omp session/);
+  assert.match(out, /Uninstall: ~\/\.super-nemo\/repo\/sn uninstall/);
+  assert.doesNotMatch(out, /update later with|uninstall with:/);
   assert.equal(s.manifest().choices.advisor, null);
   assert.equal(s.manifest().choices.approval, "write");
 });
@@ -387,10 +354,11 @@ test("a clone that cannot be deleted after the state is gone is named, and exit 
   assert.equal(res.code, 1, res.out);
   const m = /but (\S+) \(the old .*repo\) could not be deleted .* It is safe to delete that directory/.exec(res.out);
   assert.ok(m, res.out);
-  assert.ok(fs.existsSync(m[1]));
+  const trash = m[1].replace(/^~/, s.home);
+  assert.ok(fs.existsSync(trash));
   assert.ok(!fs.existsSync(s.clone));
   assert.ok(!fs.existsSync(path.join(s.snHome, "state")));
-  fs.chmodSync(path.join(m[1], "skills", "super-nemo"), 0o755);
+  fs.chmodSync(path.join(trash, "skills", "super-nemo"), 0o755);
 });
 
 test("a fresh one-liner with --dry-run leaves HOME as it was, and a real run afterwards installs", async (t) => {
@@ -399,7 +367,7 @@ test("a fresh one-liner with --dry-run leaves HOME as it was, and a real run aft
   const before = snapshot(s.home);
   const dry = await s.bootstrap([...BOOT, "--dry-run"], { SN_REPO_URL: r.url });
   assert.equal(dry.code, 0, dry.out);
-  assert.match(dry.out, /set tools\.approvalMode/);
+  assert.match(dry.out, /Dry run: nothing was written/);
   assert.match(dry.out, /removed .*repo again: no installation was recorded/);
   assert.deepEqual(snapshot(s.home), before);
   const real = await s.bootstrap(BOOT, { SN_REPO_URL: r.url });

@@ -25,11 +25,12 @@ test("update fast-forwards, re-applies the recorded answers and reports the chan
   const { s, r } = await installed(t);
   const old = s.git(s.clone, ["rev-parse", "HEAD"]).out.trim();
   const sha = r.commit("add a skill", addSkill("nemo-extra"));
-  const res = s.update();
+  const res = s.update(["--verbose"]);
   assert.equal(res.code, 0, res.out);
-  assert.match(res.out, new RegExp(`${old.slice(0, 12)}\\.\\.${sha.slice(0, 12)}`));
-  assert.match(res.out, /add a skill/);
+  assert.match(res.out, new RegExp(`Updating SUPER-NEMO: ${old.slice(0, 12)}\\.\\.${sha.slice(0, 12)} \\(1 commit\\)\\n  - add a skill\\n`));
+  assert.match(res.out, /- add 1 skill to OMP/);
   assert.match(res.out, /link .*skills\/nemo-extra ->/);
+  assert.match(res.out, /OK Linked agents and skills\n/);
   assert.equal(s.git(s.clone, ["rev-parse", "HEAD"]).out.trim(), sha);
   assert.equal(fs.readlinkSync(path.join(s.agentDir, "skills", "nemo-extra")), path.join(s.clone, "skills", "nemo-extra"));
   const config = YAML.parse(s.read("config.yml"));
@@ -57,7 +58,7 @@ test("an update stopped by drift is finished by update --overwrite-drift, then r
 
   const stopped = s.update();
   assert.equal(stopped.code, 3, stopped.out);
-  assert.match(stopped.out, /tools\.approvalMode = "yolo"/);
+  assert.match(stopped.out, /! Auto-approve: you changed this to on \(config\.yml: tools\.approvalMode\)/);
   assert.equal(s.git(s.clone, ["rev-parse", "HEAD"]).out.trim(), sha);
   assert.notEqual(s.manifest().installedCommit, sha);
 
@@ -143,7 +144,7 @@ test("update removes the link of a skill the new revision no longer ships, and u
   r.commit("drop the skill", (w) => fs.rmSync(path.join(w, "skills", "nemo-extra"), { recursive: true }));
   const res = s.run(path.join(s.clone, "sn"), ["update"]);
   assert.equal(res.code, 0, res.out);
-  assert.match(res.out, /unlink .*skills\/nemo-extra \(no longer shipped\)/);
+  assert.match(res.out, /- remove 1 skill no longer shipped/);
   assert.equal(fs.lstatSync(link, { throwIfNoEntry: false }), undefined);
   assert.ok(!s.manifest().symlinks.includes(link));
 

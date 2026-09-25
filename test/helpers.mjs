@@ -235,3 +235,48 @@ export function seedUserContent(s) {
   s.write("AGENTS.md", "# My rules\n\nAlways answer in English.\n");
   s.write("WATCHDOG.md", "Watch for flaky tests.");
 }
+
+export const INTERNAL = /\b(modelRoles|task|tools|advisor|bash)\.[\w-]|@default|@nemo-/;
+export const withoutKeyRefs = (out) => out.replace(/ \(config\.ya?ml: [\w.-]+\)/g, "");
+
+export function underPty(command, env, answer) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "sn-pty-"));
+  const fifo = path.join(dir, "keys");
+  spawnSync("mkfifo", [fifo]);
+  const inner = `${command}; echo "SN-PTY-EXIT=$?"`;
+  const pty = process.platform === "darwin" ? "script -q /dev/null bash -c \"$0\"" : "script -qec \"$0\" /dev/null";
+  const child = spawn("bash", ["-c", `cat "$1" | ${pty} 2>&1 | cat`, inner, fifo], { env, detached: true, stdio: ["ignore", "pipe", "pipe"] });
+  const keys = fs.createWriteStream(fifo);
+  let out = "";
+  let cursor = 0;
+  let code = null;
+  const questions = [];
+  const onData = (d) => {
+    out += d;
+    for (;;) {
+      const m = /Choice \[\d+\]: |\[[yY]\/[nN](?:\/c(?:=change)?)?\] /.exec(out.slice(cursor));
+      if (!m) break;
+      const question = out.slice(cursor, cursor + m.index + m[0].length);
+      cursor += m.index + m[0].length;
+      questions.push(question);
+      keys.write(`${answer(question)}\r`);
+    }
+    const exit = /SN-PTY-EXIT=(\d+)/.exec(out);
+    if (exit && code === null) {
+      code = Number(exit[1]);
+      keys.end();
+    }
+  };
+  child.stdout.on("data", onData);
+  child.stderr.on("data", onData);
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => process.kill(-child.pid, "SIGKILL"), 180_000);
+    child.on("close", () => {
+      clearTimeout(timer);
+      keys.end();
+      fs.rmSync(dir, { recursive: true, force: true });
+      resolve({ code, out, questions });
+    });
+  });
+}
+

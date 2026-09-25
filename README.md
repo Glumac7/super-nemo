@@ -14,7 +14,20 @@ This clones the repo to `~/.super-nemo/repo` and runs `sn install` from there. F
 
 Private fork: install `gh` and `gh auth login`; the installer uses it automatically.
 
-The installer shows your current values as defaults, prints the full plan and changes nothing until you confirm. `sn install --dry-run` shows the plan only; `sn --help` lists the flags for scripted installs.
+The installer suggests a setup (your current values when you have them) and asks three questions: use this setup (or `c` to pick each model), apply, and whether to run a quick live test:
+
+```
+Suggested setup
+  Main model     claude-opus-5-5 · high     writes the code; also your everyday OMP model
+  Cheap model    same as main               used for quick searches
+  Advisor        claude-opus-5-5 · medium   watches the coder (critical work: high)
+  Reviewers      gpt-6-sol · high           different provider = better reviews
+  Auto-approve   off                        asks before running commands that change things
+
+Use this setup? [Y/n/c=change]
+```
+
+It then prints a short summary of what it will change and writes nothing until you confirm. `sn install --dry-run` shows the summary only; add `--verbose` (install, update, uninstall) for every file, link and config key. `sn --help` lists the flags for scripted installs.
 
 What it does: links the skills and agents into your OMP agent dir (`~/.omp/agent`, or the `--profile`/`OMP_PROFILE`/`PI_CODING_AGENT_DIR` one), links `~/.super-nemo/current` to the repo, adds marked blocks to `AGENTS.md`/`WATCHDOG.md`, adds a `SUPER-NEMO` advisor to `WATCHDOG.yml`, and sets the keys below in `config.yml`. Every file is backed up first; state lives in `~/.super-nemo/state` (private to you).
 
@@ -28,7 +41,7 @@ Coming from a manual install? Move your hand-copied `nemo-*` agents and SUPER-NE
 ~/.super-nemo/repo/sn update     # --dry-run lists the new commits only
 ```
 
-Fast-forwards the checkout (it refuses local changes, local commits or a branch without upstream) and re-applies your recorded answers; the same works as `./sn update` in your own checkout. `sn status` shows roles, drift and broken links; `sn verify [--smoke]` checks the installation.
+Fast-forwards the checkout (it refuses local changes, local commits or a branch without upstream), lists the new commits and re-applies your recorded answers; the same works as `./sn update` in your own checkout. `sn status` shows the chosen models, changes since install and broken links; `sn verify [--smoke]` checks the installation.
 
 ## Models
 
@@ -45,10 +58,10 @@ Tool approval defaults to `write` (not yolo). `eval` always prompts, and a deny 
 ## Uninstall
 
 ```sh
-~/.super-nemo/repo/sn uninstall   # add --dry-run to see the plan
+~/.super-nemo/repo/sn uninstall   # --dry-run: summary only; --verbose: every step; --yes: no confirmation
 ```
 
-Files you did not touch since install are restored byte for byte. Otherwise only our entries are removed; settings you changed yourself are kept and listed. The backups and the state dir go too, and so does `~/.super-nemo/repo` unless it has local changes or unpushed commits (it says so). A checkout you cloned yourself is never deleted.
+It shows a short summary and asks before removing anything (not with `--yes` or without a terminal). Files you did not touch since install are restored byte for byte. Otherwise only our entries are removed; settings you changed yourself are kept and listed. The backups and the state dir go too, and so does `~/.super-nemo/repo` unless it has local changes or unpushed commits (it says so). A checkout you cloned yourself is never deleted.
 
 ## Cost per mode
 
@@ -60,7 +73,7 @@ Measured on the smoke evals with a Claude Opus-class main model and a GPT review
 | NORMAL | implementer + advisor, 4 reviewers, final review | ~$1.30 | ~3 min |
 | CRITICAL | NORMAL + security review, stronger advisor | more than NORMAL (not measured) | |
 
-The optional smoke run after install (LIGHT + NORMAL) costs about $2 and 5 minutes.
+The optional live test after install (the LIGHT + NORMAL smoke evals; the interactive installer asks, default no) costs about $2 and 3–4 minutes.
 
 ## Limits
 
