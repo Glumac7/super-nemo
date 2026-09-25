@@ -1,5 +1,5 @@
 ---
-name: architecture-review
+name: nemo-architecture-review
 description: Independent architecture review of a change - module boundaries, dependency direction, coupling, speculative abstraction. Use as SUPER-NEMO nemo-architect or when asked for an architecture review.
 ---
 

@@ -1,0 +1,44 @@
+{
+  "models": [
+    {
+      "provider": "alpha",
+      "kind": "chat",
+      "id": "big",
+      "selector": "alpha/big",
+      "name": "Alpha Big",
+      "reasoning": true,
+      "thinking": ["low", "medium", "high", "xhigh"],
+      "cost": { "input": 5, "output": 25 }
+    },
+    {
+      "provider": "alpha",
+      "kind": "chat",
+      "id": "small",
+      "selector": "alpha/small",
+      "name": "Alpha Small",
+      "reasoning": true,
+      "thinking": ["minimal", "low", "medium", "high"],
+      "cost": { "input": 1, "output": 5 }
+    },
+    {
+      "provider": "alpha",
+      "kind": "chat",
+      "id": "plain",
+      "selector": "alpha/plain",
+      "name": "Alpha Plain",
+      "reasoning": false,
+      "thinking": null,
+      "cost": { "input": 0.5, "output": 1 }
+    },
+    {
+      "provider": "beta",
+      "kind": "chat",
+      "id": "sol",
+      "selector": "beta/sol",
+      "name": "Beta Sol",
+      "reasoning": true,
+      "thinking": ["low", "medium", "high"],
+      "cost": { "input": 2, "output": 10 }
+    }
+  ]
+}

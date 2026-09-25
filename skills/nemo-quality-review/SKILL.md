@@ -1,5 +1,5 @@
 ---
-name: code-quality-review
+name: nemo-quality-review
 description: Independent code-quality review of a change - readability, complexity, duplication, naming, API quality, dead code, needless indirection. Use as SUPER-NEMO nemo-quality or when asked for a code-quality review.
 ---
 

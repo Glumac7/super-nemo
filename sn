@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [ ! -d "$root/node_modules/yaml" ]; then
+  (cd "$root" && npm ci --omit=dev --silent)
+fi
+exec node "$root/lib/sn.mjs" "$@"

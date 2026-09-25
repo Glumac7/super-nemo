@@ -5,7 +5,7 @@ description: SUPER-NEMO risk-routed engineering workflow (LIGHT / NORMAL / CRITI
 
 # SUPER-NEMO
 
-Standards: `~/.super-nemo/standards/ENGINEERING.md`. Repository and company instructions override SUPER-NEMO.
+Standards: `~/.super-nemo/current/standards/ENGINEERING.md`. Repository and company instructions override SUPER-NEMO.
 
 ## 0. Runtime
 
@@ -37,7 +37,7 @@ Reviewers are read-only and only get what you give them: give their `context` th
 
 ## 3. Modes
 
-The mode selects the implementer, and the implementer's definition attaches the advisor (models `@advisor` / `@advisor-critical`, guidance `~/.omp/agent/WATCHDOG.md`). Never change `advisor.*` settings or run `/advisor` yourself. Advisor notes are input for the implementer, not verdicts.
+The mode selects the implementer, and the implementer's definition attaches the advisor (models `@advisor` / `@advisor-critical`, guidance from the SUPER-NEMO watchdog). Never change `advisor.*` settings or run `/advisor` yourself. Advisor notes are input for the implementer, not verdicts.
 
 **Native review gate** (NORMAL and CRITICAL; never LIGHT). OMP's `/review` only expands into a prompt that dispatches the bundled `reviewer` agent, and you cannot type slash commands, so dispatch that agent directly:
 - Only once checks are green. Add `agent: "reviewer"` tasks to the mode's review batch, sized like `/review`: 1 task for <100 changed lines or ≤2 files, else split the files across 2 (<500 lines), up to 4 (<2000), up to 8.

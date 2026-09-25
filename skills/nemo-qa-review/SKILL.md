@@ -1,5 +1,5 @@
 ---
-name: qa-review
+name: nemo-qa-review
 description: Independent adversarial QA of a change against its acceptance criteria, with evidence from running the checks. Use as SUPER-NEMO nemo-qa or when asked to verify a change.
 ---
 

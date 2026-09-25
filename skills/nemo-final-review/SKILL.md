@@ -1,5 +1,5 @@
 ---
-name: final-adversarial-review
+name: nemo-final-review
 description: Final independent adversarial review of a finished change before hand-off - tries to break it. Use as SUPER-NEMO nemo-final-review or when asked for an adversarial review.
 ---
 
