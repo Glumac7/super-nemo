@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 import { unpushedWork } from "../lib/git.mjs";
+import { authServer } from "./helpers.mjs";
 
 process.env.GIT_CONFIG_NOSYSTEM = "1";
 process.env.GIT_CONFIG_GLOBAL = "/dev/null";
@@ -76,4 +77,31 @@ test("every local branch needs a remote upstream it does not run ahead of", (t) 
   assert.match(unpushedWork(r.work), /branch feature does not track a remote branch/);
   r.git("push", "-q", "-u", "origin", "feature");
   assert.equal(unpushedWork(r.work), null);
+});
+
+test("github network calls in gh and anonymous mode never run an inherited askpass, which plain calls would", async (t) => {
+  const server = await authServer(t);
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "sn-askpass-")));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const log = path.join(root, "askpass.log");
+  const askpass = path.join(root, "askpass");
+  fs.writeFileSync(askpass, `#!/bin/bash\nprintf '%s\\n' "$*" >> '${log}'\nprintf 'leaked\\n'\n`, { mode: 0o755 });
+  fs.mkdirSync(path.join(root, "bin"));
+  fs.writeFileSync(path.join(root, "bin", "gh"), "#!/bin/bash\nexit 1\n", { mode: 0o755 });
+  fs.writeFileSync(path.join(root, "gitconfig"), `[core]\n\taskPass = ${askpass}\n`);
+  const env = { ...process.env, PATH: `${path.join(root, "bin")}:${process.env.PATH}`, GIT_ASKPASS: askpass, SSH_ASKPASS: askpass, GIT_CONFIG_GLOBAL: path.join(root, "gitconfig"), GIT_ALLOW_PROTOCOL: "http" };
+  const script = "const [mod, url, access] = process.argv.slice(1); const { git } = await import(mod); try { git(process.cwd(), ['ls-remote', url], { access: access || undefined }); } catch { process.exit(1); }";
+  const gitModule = new URL("../lib/git.mjs", import.meta.url).href;
+  const lsRemote = (access) => spawnSync(process.execPath, ["--input-type=module", "-e", script, gitModule, server.url, access], { cwd: root, env, encoding: "utf8" });
+  const asked = () => (fs.existsSync(log) ? fs.readFileSync(log, "utf8") : "");
+
+  for (const access of ["anonymous", "gh"]) {
+    const res = lsRemote(access);
+    assert.equal(res.status, 1, `${access}: ${res.stderr}`);
+    assert.equal(asked(), "", access);
+  }
+  assert.ok(server.requests().length >= 2);
+
+  assert.equal(lsRemote("").status, 1);
+  assert.match(asked(), /Username for/);
 });

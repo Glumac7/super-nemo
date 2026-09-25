@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { test } from "node:test";
 import YAML from "yaml";
-import { remote, sandbox, snapshot } from "./helpers.mjs";
+import { ANONYMOUS, GH_HINT, GITHUB_URL, PRIVATE_HINT, VIA_GH, githubStyle, remote, sandbox, snapshot } from "./helpers.mjs";
 
 const ANSWERS = ["--yes", "--no-smoke", "--approval", "always-ask", "--advisor", "off", "--fast", "alpha/small"];
 
@@ -211,6 +211,32 @@ test("a failed fetch reports the remote without the credentials in its URL", asy
   assert.equal(res.code, 1, res.out);
   assert.match(res.out, /git fetch origin \(https:\/\/\*\*\*@127\.0\.0\.1:1\/super-nemo\.git\) failed/);
   assert.doesNotMatch(res.out, /s3cr3t|someone/);
+});
+
+test("update picks credentials from the URL git really fetches, so an alias rewritten to github uses gh or stays anonymous", async (t) => {
+  const s = sandbox(t);
+  const r = remote(t);
+  const checkout = path.join(s.home, "src", "super-nemo");
+  fs.mkdirSync(path.dirname(checkout), { recursive: true });
+  assert.equal(s.git(path.dirname(checkout), ["clone", "-q", r.url, "super-nemo"]).code, 0);
+  assert.equal(s.run(path.join(checkout, "sn"), ["install", "--yes", "--no-smoke"]).code, 0);
+  assert.equal(s.git(checkout, ["remote", "set-url", "origin", "sn-alias:super-nemo"]).code, 0);
+  const alias = `[url "${GITHUB_URL}"]\n\tinsteadOf = sn-alias:super-nemo\n`;
+  for (const [state, config, hint] of [["logged-in", VIA_GH, PRIVATE_HINT], ["absent", ANONYMOUS, `${PRIVATE_HINT}; ${GH_HINT}`]]) {
+    const gh = githubStyle(t, s, r.url, { gh: state, gitconfig: alias });
+    const res = s.run(path.join(checkout, "sn"), ["update"], gh.env);
+    assert.equal(res.code, 1, `${state}: ${res.out}`);
+    assert.ok(res.out.includes(`git fetch origin (${GITHUB_URL}) failed`), `${state}: ${res.out}`);
+    assert.ok(res.out.includes(`\n${hint}`), `${state}: ${res.out}`);
+    if (state === "logged-in") assert.ok(!res.out.includes(GH_HINT), res.out);
+    const calls = gh.network();
+    assert.deepEqual(calls.map((c) => [c.command, c.config]), [["fetch", config]], state);
+    assert.equal(calls[0].prompt, "0", state);
+    assert.match(calls[0].gitAskpass, /\/true$/, state);
+    assert.equal(calls[0].sshAskpass, "unset", state);
+    assert.deepEqual(gh.askpassCalls(), [], state);
+    assert.deepEqual(gh.credentialCalls(), [], state);
+  }
 });
 
 test("update --dry-run lists the new commits and changes nothing else", async (t) => {

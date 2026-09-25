@@ -10,11 +10,11 @@ redact() { sed -E 's#([A-Za-z][A-Za-z0-9+.-]*://)[^/@[:space:]]*@#\1***@#g'; }
 shown() { printf '%s' "$1" | redact; }
 
 git_net() {
-  if [ "$use_gh" = 1 ]; then
-    GIT_TERMINAL_PROMPT=0 git -c credential.helper= -c 'credential.helper=!gh auth git-credential' "$@"
-  else
-    GIT_TERMINAL_PROMPT=0 git "$@"
-  fi
+  case "$access" in
+    gh) env -u SSH_ASKPASS GIT_TERMINAL_PROMPT=0 GIT_ASKPASS="$silent_askpass" git -c credential.helper= -c 'credential.helper=!gh auth git-credential' -c core.askPass= "$@" ;;
+    anonymous) env -u SSH_ASKPASS GIT_TERMINAL_PROMPT=0 GIT_ASKPASS="$silent_askpass" git -c credential.helper= -c core.askPass= "$@" ;;
+    *) GIT_TERMINAL_PROMPT=0 git "$@" ;;
+  esac
 }
 
 identity() {
@@ -152,12 +152,8 @@ main() {
   for arg in "$@"; do
     if [ "$arg" = --dry-run ]; then dry_run=1; fi
   done
-  case "$url" in
-    https://github.com/*) use_gh=1 ;;
-    *) use_gh=0 ;;
-  esac
+  access=local
   access_hint=""
-  if [ "$use_gh" = 1 ]; then access_hint="; run \`gh auth login\` and make sure you have access to $repo"; fi
 
   command -v git >/dev/null 2>&1 || die "git is not installed"
   command -v node >/dev/null 2>&1 || die "node 20 or newer is required"
@@ -169,10 +165,18 @@ main() {
   if ((BASH_REMATCH[1] < 18 || (BASH_REMATCH[1] == 18 && BASH_REMATCH[2] < 3))); then
     die "omp $omp_version is too old; need 18.3.0 or newer"
   fi
-  if [ "$use_gh" = 1 ]; then
-    command -v gh >/dev/null 2>&1 || die "the GitHub CLI (gh) is required$access_hint"
-    gh auth status --hostname github.com >/dev/null 2>&1 || die "gh is not logged in$access_hint"
-  fi
+  case "$url" in
+    https://github.com/*)
+      silent_askpass="$(type -P true)" || die "cannot find the true command on PATH"
+      access_hint="; the repository may be private or unreachable"
+      if command -v gh >/dev/null 2>&1 && gh auth status --hostname github.com >/dev/null 2>&1 </dev/null; then
+        access=gh
+      else
+        access=anonymous
+        access_hint="$access_hint; for a private fork install \`gh\` and run \`gh auth login\`"
+      fi
+      ;;
+  esac
 
   trap on_exit EXIT
   if [ ! -e "$home_dir" ] && [ ! -L "$home_dir" ]; then

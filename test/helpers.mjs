@@ -116,6 +116,88 @@ export function remote(t) {
   };
 }
 
+export const GITHUB_URL = "https://github.com/Glumac7/super-nemo.git";
+export const ANONYMOUS = ["-c", "credential.helper=", "-c", "core.askPass="];
+export const VIA_GH = ["-c", "credential.helper=", "-c", "credential.helper=!gh auth git-credential", "-c", "core.askPass="];
+export const PRIVATE_HINT = "the repository may be private or unreachable";
+export const GH_HINT = "for a private fork install `gh` and run `gh auth login`";
+
+const sh = (text) => `'${text.replace(/'/g, "'\\''")}'`;
+const executable = (file) => {
+  try {
+    fs.accessSync(file, fs.constants.X_OK);
+    return fs.statSync(file).isFile();
+  } catch {
+    return false;
+  }
+};
+
+export function githubStyle(t, s, target, { gh = "absent", protocols = "file", gitconfig = "" } = {}) {
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "sn-tools-")));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const bin = path.join(root, "bin");
+  fs.mkdirSync(bin);
+  const logs = { git: path.join(root, "git.log"), gh: path.join(root, "gh.log"), credential: path.join(root, "credential.log"), askpass: path.join(root, "askpass.log") };
+  const dirs = (process.env.PATH ?? "").split(":").filter(Boolean);
+  const realGit = dirs.map((d) => path.join(d, "git")).find(executable);
+  const pathDirs = dirs.map((dir, i) => {
+    if (!executable(path.join(dir, "gh"))) return dir;
+    const shadow = path.join(root, `path-${i}`);
+    fs.mkdirSync(shadow);
+    for (const name of fs.readdirSync(dir)) if (name !== "gh") fs.symlinkSync(path.join(dir, name), path.join(shadow, name));
+    return shadow;
+  });
+  const logged = '"${GIT_TERMINAL_PROMPT-unset}" "${GIT_ASKPASS-unset}" "${SSH_ASKPASS-unset}"';
+  fs.writeFileSync(path.join(bin, "git"), `#!/bin/bash\n{ printf '%s\\x1f' ${logged} "$@"; printf '\\n'; } >> ${sh(logs.git)}\nexec ${sh(realGit)} "$@"\n`, { mode: 0o755 });
+  if (gh !== "absent") {
+    const status = gh === "logged-in" ? 0 : 1;
+    fs.writeFileSync(path.join(bin, "gh"), `#!/bin/bash\nprintf '%s\\n' "$*" >> ${sh(logs.gh)}\nif [ "$1 $2" = "auth status" ]; then exit ${status}; fi\nexit 1\n`, { mode: 0o755 });
+  }
+  const marker = (name, log) => {
+    const file = path.join(root, name);
+    fs.writeFileSync(file, `#!/bin/bash\nprintf '%s\\n' "$*" >> ${sh(log)}\nprintf 'leaked\\n'\n`, { mode: 0o755 });
+    return file;
+  };
+  const helper = marker("credential-helper", logs.credential);
+  const askpass = marker("askpass", logs.askpass);
+  fs.writeFileSync(path.join(s.home, ".gitconfig"), `[url "${target}"]\n\tinsteadOf = ${GITHUB_URL}\n[credential]\n\thelper = ${helper}\n[core]\n\taskPass = ${askpass}\n${gitconfig}`);
+  const lines = (file) => (fs.existsSync(file) ? fs.readFileSync(file, "utf8").split("\n").filter(Boolean) : []);
+  return {
+    env: { PATH: [bin, ...pathDirs].join(":"), GIT_ALLOW_PROTOCOL: protocols, GIT_ASKPASS: askpass, SSH_ASKPASS: askpass },
+    network: () => lines(logs.git).map((l) => {
+      const [prompt, gitAskpass, sshAskpass, ...args] = l.split("\x1f").slice(0, -1);
+      const cmd = args.findIndex((a, i) => (i === 0 || !["-c", "-C"].includes(args[i - 1])) && !["-c", "-C"].includes(a));
+      return { prompt, gitAskpass, sshAskpass, config: args.slice(0, cmd), command: args[cmd] };
+    }).filter((c) => ["clone", "fetch"].includes(c.command)),
+    ghCalls: () => lines(logs.gh),
+    credentialCalls: () => lines(logs.credential),
+    askpassCalls: () => lines(logs.askpass),
+  };
+}
+
+export function authServer(t) {
+  const log = path.join(fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "sn-http-"))), "requests.log");
+  const child = spawn(process.execPath, ["-e", [
+    "const fs = require('fs');",
+    "const srv = require('http').createServer((req, res) => {",
+    "  fs.appendFileSync(process.argv[1], req.url + '\\n');",
+    "  res.writeHead(401, { 'WWW-Authenticate': 'Basic realm=\"sn\"' });",
+    "  res.end();",
+    "}).listen(0, '127.0.0.1', () => console.log(srv.address().port));",
+  ].join("\n"), log], { stdio: ["ignore", "pipe", "inherit"] });
+  t.after(() => {
+    child.kill();
+    fs.rmSync(path.dirname(log), { recursive: true, force: true });
+  });
+  return new Promise((resolve, reject) => {
+    child.once("error", reject);
+    child.stdout.once("data", (d) => resolve({
+      url: `http://127.0.0.1:${String(d).trim()}/super-nemo.git`,
+      requests: () => (fs.existsSync(log) ? fs.readFileSync(log, "utf8").split("\n").filter(Boolean) : []),
+    }));
+  });
+}
+
 export function snapshot(root) {
   const out = {};
   const walk = (dir) => {

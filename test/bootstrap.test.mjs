@@ -4,7 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
-import { INSTALL, REPO, remote, sandbox, snapshot } from "./helpers.mjs";
+import { ANONYMOUS, GH_HINT, GITHUB_URL, INSTALL, PRIVATE_HINT, REPO, VIA_GH, authServer, githubStyle, remote, sandbox, snapshot } from "./helpers.mjs";
 
 const BOOT = ["--yes", "--no-smoke"];
 
@@ -44,6 +44,88 @@ test("bootstrap installs from a private-style remote, re-runs idempotently and u
   assert.ok(!fs.existsSync(s.snHome));
   assert.deepEqual(snapshot(s.home), before);
   assert.deepEqual(globalGitConfig(s), gitBefore);
+});
+
+const assertQuiet = (c, config, label) => {
+  assert.deepEqual(c.config, config, label);
+  assert.equal(c.prompt, "0", label);
+  assert.match(c.gitAskpass, /\/true$/, label);
+  assert.equal(c.sshAskpass, "unset", label);
+};
+
+test("without gh a github URL installs, updates and uninstalls anonymously and never runs a credential helper", async (t) => {
+  const s = sandbox(t);
+  const r = remote(t);
+  const gh = githubStyle(t, s, r.url);
+  const before = snapshot(s.home);
+  assert.equal(s.run("bash", ["-c", "command -v gh"], gh.env).code, 1);
+  const sn = (args) => s.run(path.join(s.clone, "sn"), args, gh.env);
+
+  const res = await s.bootstrap(BOOT, gh.env);
+  assert.equal(res.code, 0, res.out);
+  assert.deepEqual(s.manifest().clone, { path: s.clone, createdByBootstrap: true, origin: GITHUB_URL });
+
+  const sha = r.commit("upstream change", (w) => fs.writeFileSync(path.join(w, "CHANGELOG.txt"), "new\n"));
+  const up = sn(["update"]);
+  assert.equal(up.code, 0, up.out);
+  assert.match(up.out, /upstream change/);
+  assert.equal(s.git(s.clone, ["rev-parse", "HEAD"]).out.trim(), sha);
+
+  const un = sn(["uninstall"]);
+  assert.equal(un.code, 0, un.out);
+  assert.deepEqual(snapshot(s.home), before);
+
+  const [clone, fetch, ...rest] = gh.network();
+  assert.deepEqual(rest, []);
+  assert.equal(clone.command, "clone");
+  assertQuiet(clone, ANONYMOUS, "clone");
+  assert.equal(fetch.command, "fetch");
+  assert.deepEqual(fetch.config, [], "fetch goes to the rewritten local URL, so it needs no credential settings");
+  assert.deepEqual(gh.credentialCalls(), []);
+  assert.deepEqual(gh.askpassCalls(), []);
+});
+
+test("a github URL is cloned through gh only when gh reports a login, and a failed clone says why", async (t) => {
+  for (const [state, config, hint] of [["logged-in", VIA_GH, PRIVATE_HINT], ["logged-out", ANONYMOUS, `${PRIVATE_HINT}; ${GH_HINT}`]]) {
+    const s = sandbox(t);
+    const r = remote(t);
+    const gh = githubStyle(t, s, r.url, { gh: state });
+    const before = snapshot(s.home);
+
+    const missing = await s.bootstrap(BOOT, { ...gh.env, SN_REPO: "Glumac7/missing" });
+    assert.equal(missing.code, 1, missing.out);
+    assert.ok(missing.out.includes(`could not clone https://github.com/Glumac7/missing.git; ${hint}\n`), `${state}: ${missing.out}`);
+    assert.deepEqual(snapshot(s.home), before);
+
+    const res = await s.bootstrap(BOOT, gh.env);
+    assert.equal(res.code, 0, `${state}: ${res.out}`);
+
+    const calls = gh.network();
+    assert.deepEqual(calls.map((c) => c.command), ["clone", "clone"], state);
+    for (const c of calls) assertQuiet(c, config, state);
+    assert.ok(gh.ghCalls().includes("auth status --hostname github.com"), state);
+    assert.ok(!gh.ghCalls().some((c) => c.startsWith("auth token")), state);
+    assert.deepEqual(gh.credentialCalls(), [], state);
+  }
+});
+
+test("a github clone that is asked for a login fails without running an inherited askpass or credential helper", async (t) => {
+  for (const [state, config] of [["absent", ANONYMOUS], ["logged-in", VIA_GH]]) {
+    const s = sandbox(t);
+    const server = await authServer(t);
+    const gh = githubStyle(t, s, server.url, { gh: state, protocols: "file:http" });
+    const before = snapshot(s.home);
+    const res = await s.bootstrap(BOOT, gh.env);
+    assert.equal(res.code, 1, `${state}: ${res.out}`);
+    assert.match(res.out, /could not clone https:\/\/github\.com\/Glumac7\/super-nemo\.git/, state);
+    assert.ok(server.requests().length > 0, state);
+    assert.deepEqual(gh.network().map((c) => c.command), ["clone"], state);
+    assertQuiet(gh.network()[0], config, state);
+    if (state === "logged-in") assert.ok(gh.ghCalls().includes("auth git-credential get"), gh.ghCalls().join("\n"));
+    assert.deepEqual(gh.askpassCalls(), [], state);
+    assert.deepEqual(gh.credentialCalls(), [], state);
+    assert.deepEqual(snapshot(s.home), before);
+  }
 });
 
 test("bootstrap aborts without changes when ~/.super-nemo/repo is not its own clone", async (t) => {

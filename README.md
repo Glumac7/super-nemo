@@ -2,19 +2,17 @@
 
 A risk-routed engineering workflow for [Oh My Pi](https://github.com/can1357/oh-my-pi) (`omp`). Every request to change code is routed to LIGHT, NORMAL or CRITICAL; each mode runs its own set of implementer, advisor and reviewer agents (`nemo-*`) plus OMP's `reviewer`.
 
-## Prerequisites
-
-- `omp` 18.3.0 or newer, with `omp login` done for each model provider you want to use
-- the GitHub CLI logged in with access to this repository: `gh auth login`
-- git, Node.js 20+, bash
-
 ## Install
 
 ```sh
-gh api -H 'Accept: application/vnd.github.raw' repos/Glumac7/super-nemo/contents/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/Glumac7/super-nemo/main/install.sh | bash
 ```
 
-This clones the repo to `~/.super-nemo/repo` (git uses `gh` for this one command; your git config is not changed) and runs `sn install` from there. Flags pass through: `... | bash -s -- --yes --impl <sel> --no-smoke`. Running the line again fast-forwards that checkout and re-runs the installer.
+Prerequisites: `omp` 18.3.0 or newer (with `omp login` done for each model provider you want to use), git, Node.js 20+.
+
+This clones the repo to `~/.super-nemo/repo` and runs `sn install` from there. Flags pass through: `curl -fsSL ... | bash -s -- --yes --impl <sel> --no-smoke`. Running the line again fast-forwards that checkout and re-runs the installer. Your git config is not changed.
+
+Private fork: install `gh` and `gh auth login`; the installer uses it automatically.
 
 The installer shows your current values as defaults, prints the full plan and changes nothing until you confirm. `sn install --dry-run` shows the plan only; `sn --help` lists the flags for scripted installs.
 
