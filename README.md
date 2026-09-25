@@ -4,23 +4,33 @@ A risk-routed engineering workflow for [Oh My Pi](https://github.com/can1357/oh-
 
 ## Prerequisites
 
-- `omp` 18.3.0 or newer, logged in to at least one model provider
-- Node.js 20+, git, bash
+- `omp` 18.3.0 or newer, with `omp login` done for each model provider you want to use
+- the GitHub CLI logged in with access to this repository: `gh auth login`
+- git, Node.js 20+, bash
 
 ## Install
 
 ```sh
-git clone <this repository> super-nemo && cd super-nemo
-./sn install
+gh api -H 'Accept: application/vnd.github.raw' repos/Glumac7/super-nemo/contents/install.sh | bash
 ```
 
-The installer shows your current values as defaults, prints the full plan and changes nothing until you confirm. Use `./sn install --dry-run` to see the plan only; `./sn --help` lists the flags for scripted installs (`--yes --impl … --no-smoke`).
+This clones the repo to `~/.super-nemo/repo` (git uses `gh` for this one command; your git config is not changed) and runs `sn install` from there. Flags pass through: `... | bash -s -- --yes --impl <sel> --no-smoke`. Running the line again fast-forwards that checkout and re-runs the installer.
 
-What it does: links the skills and agents into your OMP agent dir (`~/.omp/agent`, or the `--profile`/`OMP_PROFILE`/`PI_CODING_AGENT_DIR` one), links `~/.super-nemo/current` to this repo, adds marked blocks to `AGENTS.md`/`WATCHDOG.md`, adds a `SUPER-NEMO` advisor to `WATCHDOG.yml`, and sets the keys below in `config.yml`. Every file is backed up first; state lives in `~/.super-nemo/state`. Keep the repo where it is. To move it: `./sn uninstall`, move it, then `./sn install` from the new place.
+The installer shows your current values as defaults, prints the full plan and changes nothing until you confirm. `sn install --dry-run` shows the plan only; `sn --help` lists the flags for scripted installs.
+
+What it does: links the skills and agents into your OMP agent dir (`~/.omp/agent`, or the `--profile`/`OMP_PROFILE`/`PI_CODING_AGENT_DIR` one), links `~/.super-nemo/current` to the repo, adds marked blocks to `AGENTS.md`/`WATCHDOG.md`, adds a `SUPER-NEMO` advisor to `WATCHDOG.yml`, and sets the keys below in `config.yml`. Every file is backed up first; state lives in `~/.super-nemo/state` (private to you).
+
+From your own checkout instead: `git clone` it anywhere and run `./sn install` there. Keep that checkout where it is; to move it: `./sn uninstall`, move it, `./sn install`.
 
 Coming from a manual install? Move your hand-copied `nemo-*` agents and SUPER-NEMO skills out of the agent dir first; install lists anything in its way and writes nothing until it is clear.
 
-`./sn status` shows roles, drift and broken links. `./sn verify [--smoke]` checks the installation.
+## Update
+
+```sh
+~/.super-nemo/repo/sn update     # --dry-run lists the new commits only
+```
+
+Fast-forwards the checkout (it refuses local changes, local commits or a branch without upstream) and re-applies your recorded answers; the same works as `./sn update` in your own checkout. `sn status` shows roles, drift and broken links; `sn verify [--smoke]` checks the installation.
 
 ## Models
 
@@ -37,10 +47,10 @@ Tool approval defaults to `write` (not yolo). `eval` always prompts, and a deny 
 ## Uninstall
 
 ```sh
-./sn uninstall            # add --dry-run to see the plan
+~/.super-nemo/repo/sn uninstall   # add --dry-run to see the plan
 ```
 
-Files you did not touch since install are restored byte for byte. Otherwise only our entries are removed; settings you changed yourself are kept and listed. The backups and the state dir go too.
+Files you did not touch since install are restored byte for byte. Otherwise only our entries are removed; settings you changed yourself are kept and listed. The backups and the state dir go too, and so does `~/.super-nemo/repo` unless it has local changes or unpushed commits (it says so). A checkout you cloned yourself is never deleted.
 
 ## Cost per mode
 
@@ -57,5 +67,6 @@ The optional smoke run after install (LIGHT + NORMAL) costs about $2 and 5 minut
 ## Limits
 
 - `bash.patterns` is an approval rule, not a sandbox. A project `.omp/config.yml` or a `--config` overlay that sets `bash.patterns` replaces the global list, so the deny list does not apply there.
+- If you edit `bash.patterns` after install and it then holds two identical copies of one of our rules (yours plus ours), uninstall cannot tell them apart and keeps both (it says so).
 - A symlinked agent dir or `~/.super-nemo` is followed, and its real path is recorded; if it later points elsewhere, the commands stop. Symlinked `config.yml`/`AGENTS.md`/`WATCHDOG.*` files and symlinked `skills`/`agents` dirs are refused rather than written through.
 - Running `omp` creates its own files (`agent.db`, logs); uninstall leaves those alone.

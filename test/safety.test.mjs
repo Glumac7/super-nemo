@@ -151,16 +151,6 @@ test("a differing SUPER-NEMO advisor in WATCHDOG.yml aborts; an identical one is
   assert.equal(s.read("WATCHDOG.yml"), same);
 });
 
-test("uninstall removes the head-most copy of an inserted deny and leaves a later user copy", (t) => {
-  const s = sandbox(t);
-  assert.equal(s.sn(INSTALL).code, 0);
-  const doc = YAML.parseDocument(s.read("config.yml"));
-  doc.getIn(["bash", "patterns"]).items.push(doc.createNode({ match: "*printenv*", approval: "deny" }));
-  s.write("config.yml", doc.toString());
-  assert.equal(s.sn(["uninstall"]).code, 0);
-  assert.deepEqual(YAML.parse(s.read("config.yml")).bash.patterns, [{ match: "*printenv*", approval: "deny" }]);
-});
-
 test("an emptied installer-created bash.patterns key is removed on uninstall", (t) => {
   const s = sandbox(t);
   s.write("config.yml", "theme:\n  dark: midnight\n");
@@ -495,33 +485,131 @@ test("an install whose state has gone missing is reported instead of installed t
   assert.deepEqual(snapshot(s.home), before);
 });
 
-test("rolling back an interrupted re-install returns an edited config to the previous installation", (t) => {
+function interruptReinstall(s, previous, files, { backupHash } = {}) {
+  const ts = "2000-01-01T00-00-00-000Z";
+  const dir = path.join(s.snHome, "state", "backups", ts);
+  fs.mkdirSync(dir, { recursive: true });
+  const txnFiles = files.map(([kind, name, before]) => {
+    fs.writeFileSync(path.join(dir, name), before);
+    return {
+      kind, path: s.file(name), existed: true, backup: `backups/${ts}/${name}`, backupHash: backupHash ?? sha(before), afterHash: sha(s.read(name)),
+    };
+  });
+  const txn = { backupDir: `backups/${ts}`, files: txnFiles, symlinks: [], removedLinks: [], dirs: [], previous };
+  fs.writeFileSync(s.manifestPath, JSON.stringify({ ...s.manifest(), status: "pending", txn }));
+}
+
+test("an interrupted re-install over a drifted key is rolled back from its own backup", (t) => {
   const s = sandbox(t);
   seedUserContent(s);
   assert.equal(s.sn(INSTALL).code, 0);
-  const m = s.manifest();
   const doc = YAML.parseDocument(s.read("config.yml"));
-  doc.setIn(["tools", "approvalMode"], "yolo");
-  doc.setIn(["theme", "light"], "paper");
+  doc.setIn(["tools", "approvalMode"], "always-ask");
   s.write("config.yml", doc.toString());
-  const pending = {
-    ...m,
-    status: "pending",
-    config: { ...m.config, keys: { ...m.config.keys, "tools.approvalMode": { ...m.config.keys["tools.approvalMode"], ours: "yolo" } } },
-    txn: {
-      backupDir: "backups/x",
-      files: [{ kind: "config", path: s.file("config.yml"), existed: true, backup: "backups/x/config.yml", backupHash: "0", afterHash: "1" }],
-      symlinks: [],
-      dirs: [],
-      previous: m,
-    },
-  };
-  fs.writeFileSync(s.manifestPath, JSON.stringify(pending));
+  const previous = s.manifest();
+  const beforeReinstall = s.read("config.yml");
+  const re = s.sn([...INSTALL, "--approval", "yolo", "--overwrite-drift"]);
+  assert.equal(re.code, 0, re.out);
+  assert.equal(YAML.parse(s.read("config.yml")).tools.approvalMode, "yolo");
+  interruptReinstall(s, previous, [["config", "config.yml", beforeReinstall]]);
+  const later = YAML.parseDocument(s.read("config.yml"));
+  later.setIn(["theme", "light"], "paper");
+  s.write("config.yml", later.toString());
+
   const res = s.sn(["status"]);
   assert.equal(res.code, 0, res.out);
+  assert.match(res.out, /interrupted install; rolling it back/);
   const config = YAML.parse(s.read("config.yml"));
-  assert.equal(config.tools.approvalMode, "write");
+  assert.equal(config.tools.approvalMode, "always-ask");
   assert.equal(config.theme.light, "paper");
+  assert.deepEqual({ ...config, theme: YAML.parse(beforeReinstall).theme }, YAML.parse(beforeReinstall));
   assert.equal(s.manifest().status, "installed");
-  assert.equal(s.manifest().config.keys["tools.approvalMode"].ours, "write");
+  assert.equal(s.manifest().choices.approval, "write");
+  assert.ok(!fs.existsSync(path.join(s.snHome, "state", "backups", "2000-01-01T00-00-00-000Z")));
+});
+
+test("an interrupted re-install that rewrote an edited block restores that block and keeps later edits outside it", (t) => {
+  const s = sandbox(t);
+  seedUserContent(s);
+  assert.equal(s.sn(INSTALL).code, 0);
+  const edited = s.read("AGENTS.md").replace("@~/.super-nemo/current/blocks/AGENTS.md\n", "@~/.super-nemo/current/blocks/AGENTS.md\nmy own line in the block\n");
+  s.write("AGENTS.md", edited);
+  const previous = s.manifest();
+  assert.equal(s.sn(INSTALL).code, 0);
+  assert.doesNotMatch(s.read("AGENTS.md"), /my own line/);
+  interruptReinstall(s, previous, [["agents", "AGENTS.md", edited]]);
+  s.write("AGENTS.md", `${s.read("AGENTS.md")}written later\n`);
+
+  const res = s.sn(["status"]);
+  assert.equal(res.code, 0, res.out);
+  assert.equal(s.read("AGENTS.md"), `${edited}written later\n`);
+  assert.equal(s.manifest().status, "installed");
+});
+
+test("recovery removes a block the backup did not have without eating the user's blank line before it", (t) => {
+  for (const [edit, expected] of [
+    [(b, block) => `${b}\nA new paragraph.\n\n${block}`, (b) => `${b}\nA new paragraph.\n\n`],
+    [(b, block) => `${b}\n${block}written later\n`, (b) => `${b}written later\n`],
+  ]) {
+    const s = sandbox(t);
+    seedUserContent(s);
+    assert.equal(s.sn(INSTALL).code, 0);
+    const original = "# My rules\n\nAlways answer in English.\n";
+    s.write("AGENTS.md", original);
+    const previous = s.manifest();
+    assert.equal(s.sn(INSTALL).code, 0);
+    const block = s.read("AGENTS.md").slice(original.length + 1);
+    assert.match(block, /^<!-- super-nemo:begin -->/);
+    interruptReinstall(s, previous, [["agents", "AGENTS.md", original]]);
+    s.write("AGENTS.md", edit(original, block));
+    const res = s.sn(["status"]);
+    assert.equal(res.code, 0, res.out);
+    assert.equal(s.read("AGENTS.md"), expected(original));
+  }
+});
+
+test("an interrupted re-install whose backup cannot be verified changes nothing and keeps the pending state", (t) => {
+  const s = sandbox(t);
+  seedUserContent(s);
+  assert.equal(s.sn(INSTALL).code, 0);
+  const previous = s.manifest();
+  const beforeReinstall = s.read("config.yml");
+  assert.equal(s.sn([...INSTALL, "--approval", "yolo"]).code, 0);
+  interruptReinstall(s, previous, [["config", "config.yml", beforeReinstall]], { backupHash: "0" });
+  s.write("config.yml", `${s.read("config.yml")}extra: 1\n`);
+  const before = snapshot(s.home);
+  const res = s.sn(["status"]);
+  assert.equal(res.code, 1, res.out);
+  assert.match(res.out, /cannot be rolled back automatically[\s\S]*config\.yml: backup .* is missing or damaged/);
+  assert.deepEqual(snapshot(s.home), before);
+  assert.equal(s.manifest().status, "pending");
+});
+
+test("state dirs are 0700 and the manifest and backups 0600 under umask 022; modes we did not create stay", (t) => {
+  const s = sandbox(t);
+  seedUserContent(s);
+  fs.chmodSync(s.file("config.yml"), 0o640);
+  fs.mkdirSync(s.snHome);
+  fs.chmodSync(s.snHome, 0o755);
+  const sn = (args) => s.run("bash", ["-c", 'umask 022; exec "$0" "$@"', path.join(REPO, "sn"), ...args]);
+  const mode = (p) => fs.statSync(p).mode & 0o777;
+  const backups = path.join(s.snHome, "state", "backups");
+  const check = () => {
+    assert.equal(mode(path.join(s.snHome, "state")), 0o700);
+    assert.equal(mode(backups), 0o700);
+    assert.equal(mode(s.manifestPath), 0o600);
+    const dirs = fs.readdirSync(backups);
+    assert.ok(dirs.length > 0);
+    for (const d of dirs) {
+      assert.equal(mode(path.join(backups, d)), 0o700);
+      for (const f of fs.readdirSync(path.join(backups, d))) assert.equal(mode(path.join(backups, d, f)), 0o600, f);
+    }
+  };
+  assert.equal(sn(INSTALL).code, 0);
+  check();
+  s.write("AGENTS.md", `${s.read("AGENTS.md")}more\n`);
+  assert.equal(sn([...INSTALL, "--approval", "yolo"]).code, 0);
+  check();
+  assert.equal(mode(s.file("config.yml")), 0o640);
+  assert.equal(mode(s.snHome), 0o755);
 });
