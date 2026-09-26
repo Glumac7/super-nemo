@@ -1,83 +1,45 @@
 # SUPER-NEMO
 
-A risk-routed engineering workflow for [Oh My Pi](https://github.com/can1357/oh-my-pi) (`omp`). Every request to change code is routed to LIGHT, NORMAL or CRITICAL; each mode runs its own set of implementer, advisor and reviewer agents (`nemo-*`) plus OMP's `reviewer`.
+SUPER-NEMO is a coding workflow for [Oh My Pi](https://github.com/can1357/oh-my-pi) (`omp`). It picks a review process based on the risk of your request: small changes stay small; higher-risk changes get more checks and independent reviewers. It runs inside OMP, not as a separate chat app.
 
 ## Install
+
+You need `omp` 18.3.0+ (signed in with `omp login` for the model providers you use), git, and Node.js 20+.
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/Glumac7/super-nemo/main/install.sh | bash
 ```
 
-Prerequisites: `omp` 18.3.0 or newer (with `omp login` done for each model provider you want to use), git, Node.js 20+.
+The installer downloads SUPER-NEMO to `~/.super-nemo/repo`, suggests models for coding, advising, and review, then asks before changing your OMP setup. It backs up files it changes. The optional live test makes additional model calls; you can skip it.
 
-This clones the repo to `~/.super-nemo/repo` and runs `sn install` from there. Flags pass through: `curl -fsSL ... | bash -s -- --yes --impl <sel> --no-smoke`. Running the line again fast-forwards that checkout and re-runs the installer. Your git config is not changed.
+## Use it
 
-Private fork: install `gh` and `gh auth login`; the installer uses it automatically.
-
-The installer suggests a setup (your current values when you have them) and asks three questions: use this setup (or `c` to pick each model), apply, and whether to run a quick live test:
-
-```
-Suggested setup
-  Main model     claude-opus-5-5 · high     writes the code; also your everyday OMP model
-  Cheap model    same as main               used for quick searches
-  Advisor        claude-opus-5-5 · medium   watches the coder (critical work: high)
-  Reviewers      gpt-6-sol · high           different provider = better reviews
-  Auto-approve   off                        asks before running commands that change things
-
-Use this setup? [Y/n/c=change]
-```
-
-It then prints a short summary of what it will change and writes nothing until you confirm. `sn install --dry-run` shows the summary only; add `--verbose` (install, update, uninstall) for every file, link and config key. `sn --help` lists the flags for scripted installs.
-
-What it does: links the skills and agents into your OMP agent dir (`~/.omp/agent`, or the `--profile`/`OMP_PROFILE`/`PI_CODING_AGENT_DIR` one), links `~/.super-nemo/current` to the repo, adds marked blocks to `AGENTS.md`/`WATCHDOG.md`, adds a `SUPER-NEMO` advisor to `WATCHDOG.yml`, and sets the keys below in `config.yml`. Every file is backed up first; state lives in `~/.super-nemo/state` (private to you).
-
-From your own checkout instead: `git clone` it anywhere and run `./sn install` there. Keep that checkout where it is; to move it: `./sn uninstall`, move it, `./sn install`.
-
-Coming from a manual install? Move your hand-copied `nemo-*` agents and SUPER-NEMO skills out of the agent dir first; install lists anything in its way and writes nothing until it is clear.
-
-## Update
+From the repository you want to work on, ask OMP for a code change as usual:
 
 ```sh
-~/.super-nemo/repo/sn update     # --dry-run lists the new commits only
+cd path/to/your-project
+omp "Fix the login form error and check the changed behavior"
 ```
 
-Fast-forwards the checkout (it refuses local changes, local commits or a branch without upstream), lists the new commits and re-applies your recorded answers; the same works as `./sn update` in your own checkout. `sn status` shows the chosen models, changes since install and broken links; `sn verify [--smoke]` checks the installation.
+SUPER-NEMO activates automatically for requests to change a repository. It does not run for questions or code-reading requests. It selects:
 
-## Models
+| Mode | When | What happens |
+| --- | --- | --- |
+| LIGHT | Small, low-risk changes | Implement, check, quality review |
+| NORMAL | Most code changes | Implementer with advisor; checks and independent reviews |
+| CRITICAL | Security, secrets, data, deploy, or other high-risk changes | Stronger advisor, security review, and human-review handoff |
 
-| Role | Used by | Default |
-|---|---|---|
-| `modelRoles.default` | you and the implementers | your current model, thinking high |
-| `modelRoles.nemo-fast` | `scout`, `sonic` (optional) | cheapest reasoning model of the same provider, low |
-| `modelRoles.advisor` | NORMAL advisor (can be off) | implementation model, medium |
-| `modelRoles.advisor-critical` | CRITICAL advisor | advisor model, high |
-| `modelRoles.nemo-review` | all reviewers | a model from another provider if you have one, high |
+You can choose a mode explicitly: `omp "super-nemo light: Fix the typo in the footer"` (or `normal` / `critical`). To let it choose, just describe the task; `super-nemo:` also uses automatic selection. Work happens on a non-protected branch. SUPER-NEMO does not push, deploy, or merge unless you explicitly ask.
 
-Tool approval defaults to `write` (not yolo). `eval` always prompts, and a deny list for publish/deploy/destructive/secret-reading commands is put at the head of `bash.patterns`, with a few read-only `git` allow rules at the end (`config/deny-patterns.json`). `git push` is not blocked; the agents only push when you ask.
-
-## Uninstall
+## Manage the install
 
 ```sh
-~/.super-nemo/repo/sn uninstall   # --dry-run: summary only; --verbose: every step; --yes: no confirmation
+~/.super-nemo/repo/sn status       # Show installation, model choices, and changed settings
+~/.super-nemo/repo/sn verify       # Check the installation
+~/.super-nemo/repo/sn update       # Fetch updates and reapply your choices
+~/.super-nemo/repo/sn uninstall    # Remove SUPER-NEMO; restore settings where safe
 ```
 
-It shows a short summary and asks before removing anything (not with `--yes` or without a terminal). Files you did not touch since install are restored byte for byte. Otherwise only our entries are removed; settings you changed yourself are kept and listed. The backups and the state dir go too, and so does `~/.super-nemo/repo` unless it has local changes or unpushed commits (it says so). A checkout you cloned yourself is never deleted.
+`sn update` requires a clean checkout with an upstream branch. `sn uninstall` asks before removing anything and keeps settings you changed yourself. Use `~/.super-nemo/repo/sn --help` for flags, including `--dry-run` to preview install, update, or uninstall and `--profile` for a non-default OMP profile. If you cloned the repository yourself, use `./sn install` and the corresponding `./sn` commands from that checkout instead.
 
-## Cost per mode
-
-Measured on the smoke evals with a Claude Opus-class main model and a GPT reviewer at API prices:
-
-| Mode | Agents | Cost | Time |
-|---|---|---|---|
-| LIGHT | 1 reviewer | ~$0.40 | ~1 min |
-| NORMAL | implementer + advisor, 4 reviewers, final review | ~$1.30 | ~3 min |
-| CRITICAL | NORMAL + security review, stronger advisor | more than NORMAL (not measured) | |
-
-The optional live test after install (the LIGHT + NORMAL smoke evals; the interactive installer asks, default no) costs about $2 and 3–4 minutes.
-
-## Limits
-
-- `bash.patterns` is an approval rule, not a sandbox. A project `.omp/config.yml` or a `--config` overlay that sets `bash.patterns` replaces the global list, so the deny list does not apply there.
-- If you edit `bash.patterns` after install and it then holds two identical copies of one of our rules (yours plus ours), uninstall cannot tell them apart and keeps both (it says so).
-- A symlinked agent dir or `~/.super-nemo` is followed, and its real path is recorded; if it later points elsewhere, the commands stop. Symlinked `config.yml`/`AGENTS.md`/`WATCHDOG.*` files and symlinked `skills`/`agents` dirs are refused rather than written through.
-- Running `omp` creates its own files (`agent.db`, logs); uninstall leaves those alone.
+**Costs and safety:** Reviews and the optional live test make model calls, which can incur API charges. The installer defaults to tool approval on writes, but its command deny rules are *not a sandbox*: a project-level OMP config can replace them. Review commands and permissions before using this on a sensitive project. See the [workflow](skills/super-nemo/SKILL.md) for the full mode rules.
