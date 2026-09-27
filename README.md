@@ -2,6 +2,8 @@
 
 SUPER-NEMO is a coding workflow for [Oh My Pi](https://github.com/can1357/oh-my-pi) (`omp`). It picks a review process based on the risk of your request: small changes stay small; higher-risk changes get more checks and independent reviewers. It runs inside OMP, not as a separate chat app.
 
+We use OMP because SuperNemo isn't just “an AI that writes code.” It's an orchestration system of implementers, advisors and independent reviewers, and OMP gives us unusually good primitives for building that
+
 ## Install
 
 You need `omp` 18.3.0+ (signed in with `omp login` for the model providers you use), git, and Node.js 20+.
