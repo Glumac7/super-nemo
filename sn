@@ -1,7 +1,16 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-root="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source="${BASH_SOURCE[0]}"
+while [ -L "$source" ]; do
+  dir="$(cd "$(dirname "$source")" && pwd)"
+  target="$(readlink "$source")"
+  case "$target" in
+    /*) source="$target" ;;
+    *) source="$dir/$target" ;;
+  esac
+done
+root="$(cd "$(dirname "$source")" && pwd)"
 if [ ! -d "$root/node_modules/yaml" ]; then
   (cd "$root" && npm ci --omit=dev --silent)
 fi

@@ -265,7 +265,9 @@ test("update --dry-run lists the new commits and changes nothing else", async (t
   const head = s.git(s.clone, ["rev-parse", "HEAD"]).out;
   r.commit("pending change", (w) => fs.writeFileSync(path.join(w, "CHANGELOG.txt"), "x\n"));
   const before = withoutRemoteRefs(snapshot(s.home));
-  const res = s.update(["--dry-run"]);
+  const bin = path.join(s.home, ".local", "bin");
+  assert.equal(fs.readlinkSync(path.join(bin, "sn")), path.join(s.clone, "sn"));
+  const res = s.run("sn", ["update", "--dry-run"], { PATH: `${bin}${path.delimiter}${s.env.PATH}` });
   assert.equal(res.code, 0, res.out);
   assert.match(res.out, /Would update .*\n.*pending change/);
   assert.equal(s.git(s.clone, ["rev-parse", "HEAD"]).out, head);

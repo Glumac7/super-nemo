@@ -34,11 +34,15 @@ You can choose a mode explicitly: `omp "super-nemo light: Fix the typo in the fo
 ## Manage the install
 
 ```sh
-~/.super-nemo/repo/sn status       # Show installation, model choices, and changed settings
-~/.super-nemo/repo/sn verify       # Check the installation
-~/.super-nemo/repo/sn update       # Fetch updates and reapply your choices
-~/.super-nemo/repo/sn uninstall    # Remove SUPER-NEMO; restore settings where safe
+sn status       # Show installation, model choices, and changed settings
+sn verify       # Check the installation
+sn update       # Fetch updates and reapply your choices
+sn uninstall    # Remove SUPER-NEMO; restore settings where safe
 ```
+
+Install creates an `~/.local/bin/sn` link to the checkout without changing shell startup files or overwriting an existing command. If `~/.local/bin` is not already on `PATH`, add `export PATH="$HOME/.local/bin:$PATH"` to your shell configuration, or keep using `~/.super-nemo/repo/sn` directly. Uninstall removes only the launcher it created; it leaves `~/.local/bin` in place even if install created that directory. If an install is interrupted after creating the command but before recording its identity, recovery leaves the command and pending state untouched rather than risk deleting an unowned replacement; inspect `~/.local/bin/sn`, move it away if appropriate, then retry.
+
+Launcher cleanup is not a security boundary against another process running as your user: a hostile same-user process can replace its private temporary link between verification and deletion during uninstall. Do not run uninstall alongside untrusted same-user processes.
 
 For an installer-managed official GitHub checkout on `main`, interactive OMP sessions make a best-effort background check at most once every 24 hours and may show a notice when a newer commit is available. There are no checks in headless sessions, forks, manually cloned checkouts, or other branches. The notice uses the Git executable recorded at installation; if Git moves, rerun `~/.super-nemo/repo/sn install` from a clean checkout. The notice never installs anything: preview available commits anytime with `~/.super-nemo/repo/sn update --dry-run`, then install manually with `~/.super-nemo/repo/sn update`. Updates require a clean checkout with an upstream branch.
 

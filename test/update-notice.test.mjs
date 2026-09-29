@@ -209,6 +209,20 @@ test("ahead and diverged main never claim an update; only linear behind ancestry
   assert.deepEqual(s.notices, [], "a changed remote main between requests must not prompt");
 });
 
+test("a checkout beyond the compare page limit still receives a manual update notice", async (t) => {
+  const s = await fixture(t);
+  const comparison = {
+    status: "ahead", ahead_by: 300, behind_by: 0, total_commits: 300,
+    base_commit: { sha: s.head }, merge_base_commit: { sha: s.head },
+    commits: Array.from({ length: 250 }, (_, i) => ({ sha: (i + 1).toString(16).padStart(40, "0") })),
+  };
+  s.session(async (url) => url === API ? s.json(NEW_SHA)
+    : new Response(JSON.stringify(comparison), { headers: { "Content-Type": "application/json" } }));
+  await until(() => s.notices.length === 1);
+  assert.match(s.notices[0].text, /sn update --dry-run/);
+  assert.equal(s.calls(), 2);
+});
+
 test("concurrent interactive startups atomically claim one daily check", async (t) => {
   const s = await fixture(t);
   const fetch = async (url) => url === API ? s.json(NEW_SHA) : s.compare("ahead");

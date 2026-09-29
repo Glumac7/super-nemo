@@ -199,9 +199,16 @@ async function newer(fetchImpl, local) {
   if (typeof sha !== "string" || !SHA.test(sha) || sha === local) return false;
   // GitHub compares base..head: 'ahead' means main descends from this local commit.
   const comparison = await apiJson(fetchImpl, `${COMPARE}${local}...main`, signal, MAX_COMPARE);
+  const commits = comparison?.commits;
+  const last = Array.isArray(commits) ? commits.at(-1)?.sha : null;
+  // A complete compare page must end at the previously fetched head. GitHub
+  // truncates long comparisons, where the last returned commit is not main.
+  const complete = last === sha;
+  const truncated = Number.isSafeInteger(comparison?.total_commits)
+    && comparison.total_commits === comparison.ahead_by && comparison.ahead_by > commits?.length;
   return comparison?.status === "ahead" && Number.isSafeInteger(comparison.ahead_by) && comparison.ahead_by > 0
     && comparison.behind_by === 0 && comparison.base_commit?.sha === local && comparison.merge_base_commit?.sha === local
-    && Array.isArray(comparison.commits) && comparison.commits.at(-1)?.sha === sha;
+    && Array.isArray(commits) && commits.length > 0 && SHA.test(last) && (complete || truncated);
 }
 
 export function registerUpdateNotice(pi, { home = os.homedir(), fetchImpl = globalThis.fetch, now = Date.now } = {}) {

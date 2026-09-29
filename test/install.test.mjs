@@ -18,6 +18,12 @@ test("fresh install then uninstall leaves agent dir and home as they were", (t) 
   assert.equal(fs.readlinkSync(path.join(s.agentDir, "skills", "super-nemo")), path.join(REPO, "skills", "super-nemo"));
   assert.equal(fs.readlinkSync(path.join(s.agentDir, "extensions", "super-nemo.js")), path.join(REPO, "extensions", "super-nemo.js"));
   assert.ok(s.manifest().symlinks.includes(path.join(s.agentDir, "extensions", "super-nemo.js")));
+  const launcher = path.join(s.home, ".local", "bin", "sn");
+  assert.equal(fs.readlinkSync(launcher), path.join(REPO, "sn"));
+  assert.ok(s.manifest().symlinks.includes(launcher));
+  const viaPath = s.run("sn", ["status"], { PATH: `${path.dirname(launcher)}${path.delimiter}${s.env.PATH}` });
+  assert.equal(viaPath.code, 0, viaPath.out);
+  assert.match(viaPath.out, /Installed from/);
   assert.equal(fs.readlinkSync(path.join(s.snHome, "current")), REPO);
   const config = YAML.parse(s.read("config.yml"));
   assert.equal(config.tools.approvalMode, "yolo");
@@ -28,6 +34,20 @@ test("fresh install then uninstall leaves agent dir and home as they were", (t) 
   assert.ok(!config.bash.patterns.some((p) => p.match.includes("git push")));
   assert.equal(s.sn(["uninstall"]).code, 0);
   assert.deepEqual(snapshot(s.home), before);
+});
+
+test("install creates a missing user bin; uninstall keeps its empty parent directories", (t) => {
+  const s = sandbox(t, { localBin: false });
+  const bin = path.join(s.home, ".local", "bin");
+  assert.equal(fs.existsSync(bin), false);
+  const res = s.sn(INSTALL);
+  assert.equal(res.code, 0, res.out);
+  assert.equal(fs.readlinkSync(path.join(bin, "sn")), path.join(REPO, "sn"));
+  const removed = s.sn(["uninstall"]);
+  assert.equal(removed.code, 0, removed.out);
+  assert.equal(fs.existsSync(path.join(bin, "sn")), false);
+  assert.ok(fs.statSync(bin).isDirectory());
+  assert.equal(fs.existsSync(s.snHome), false);
 });
 
 test("install keeps user content, puts our denies first and allows last, and uninstall restores the exact bytes", (t) => {
@@ -90,6 +110,20 @@ test("second identical install changes nothing", (t) => {
   assert.deepEqual(snapshot(s.home), first);
 });
 
+test("reinstall of an older manifest adds the sn launcher without changing model choices", (t) => {
+  const s = sandbox(t);
+  assert.equal(s.sn(INSTALL).code, 0);
+  const launcher = path.join(s.home, ".local", "bin", "sn");
+  fs.unlinkSync(launcher);
+  const prior = s.manifest();
+  prior.symlinks = prior.symlinks.filter((p) => p !== launcher);
+  fs.writeFileSync(s.manifestPath, JSON.stringify(prior));
+  const res = s.sn(["install", "--reuse", "--no-smoke"]);
+  assert.equal(res.code, 0, res.out);
+  assert.equal(fs.readlinkSync(launcher), path.join(REPO, "sn"));
+  assert.deepEqual(s.manifest().choices, prior.choices);
+});
+
 test("dry-run install and dry-run uninstall write nothing", (t) => {
   const s = sandbox(t);
   seedUserContent(s);
@@ -124,6 +158,7 @@ test("default output is a short plain summary; --verbose adds every file and key
   assert.match(dry.out, /- add advisor guidance \(WATCHDOG\.md \/ WATCHDOG\.yml\)\n/);
   assert.match(dry.out, /Backups of changed files: ~\/\.super-nemo\/state\/backups\/\S+\n/);
   assert.match(dry.out, /Dry run: nothing was written\. Add --verbose for every file and setting\./);
+  assert.match(dry.out, /Add ~\/\.local\/bin to PATH to use the sn command/);
   const verbose = s.sn([...INSTALL, "--dry-run", "--verbose"]);
   assert.match(verbose.out, /set modelRoles\.nemo-review: \(absent\) -> "alpha\/big:high"/);
   assert.match(verbose.out, new RegExp(`link ${s.agentDir}/skills/super-nemo -> `));
