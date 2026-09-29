@@ -8,7 +8,7 @@ export const REPO = fs.realpathSync(fileURLToPath(new URL("..", import.meta.url)
 export const MODELS = path.join(REPO, "test", "fixtures", "models.json");
 const OMP_OWNED = /(^|\/)(agent\.db|models\.db)(-shm|-wal)?$|^\.omp\/(logs|natives)(\/|$)/;
 
-export function sandbox(t, { agentDir: makeAgentDir = true } = {}) {
+export function sandbox(t, { agentDir: makeAgentDir = true, localBin = true } = {}) {
   const home = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "sn-test-")));
   t.after(() => {
     spawnSync("chmod", ["-R", "u+w", home]);
@@ -16,6 +16,7 @@ export function sandbox(t, { agentDir: makeAgentDir = true } = {}) {
   });
   const agentDir = path.join(home, ".omp", "agent");
   if (makeAgentDir) fs.mkdirSync(agentDir, { recursive: true });
+  if (localBin) fs.mkdirSync(path.join(home, ".local", "bin"), { recursive: true });
   const env = { ...process.env, HOME: home, SN_MODELS_JSON: MODELS, GIT_CONFIG_NOSYSTEM: "1" };
   for (const k of ["OMP_PROFILE", "PI_PROFILE", "PI_CODING_AGENT_DIR", "PI_CONFIG_FILES", "XDG_CONFIG_HOME", "SN_REPO", "SN_REPO_URL", "SN_REF", ...GIT_LOCATION]) delete env[k];
   const snHome = path.join(home, ".super-nemo");

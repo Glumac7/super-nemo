@@ -45,13 +45,14 @@ test("pressing Enter at the setup question keeps the suggested setup with one qu
   assert.equal(p.remaining(), 0);
   assert.deepEqual(p.asked, ["Use this setup? [Y/n/c=change] "]);
   assert.deepEqual(choices, {
-    impl: "alpha/big:high", fast: null, advisor: "alpha/big:medium", advisorCritical: "alpha/big:high", review: "beta/sol:high", approval: "write",
+    impl: "alpha/big:high", fast: null, advisor: "alpha/big:medium", advisorCritical: "alpha/big:high", review: "beta/sol:high", approval: "yolo",
   });
   const shown = p.said.join("\n");
   assert.match(shown, /Suggested setup/);
   assert.match(shown, /Main model +big - high/);
   assert.match(shown, /Cheap model +same as main/);
   assert.match(shown, /Advisor +big - medium +watches the coder \(critical work: high\)/);
+  assert.match(shown, /Auto-approve +on +runs every command without asking/);
   assert.doesNotMatch(shown, /modelRoles|@default|nemo-review/);
 });
 
@@ -82,13 +83,13 @@ test("change flow lists every model across providers once, marks the suggestion 
   const choices = await askChoices(p, models, fresh());
   assert.equal(p.remaining(), 0);
   assert.deepEqual(choices, {
-    impl: "alpha/big:high", fast: "alpha/small:low", advisor: "beta/sol:medium", advisorCritical: "beta/sol:high", review: "beta/sol:high", approval: "write",
+    impl: "alpha/big:high", fast: "alpha/small:low", advisor: "beta/sol:medium", advisorCritical: "beta/sol:high", review: "beta/sol:high", approval: "yolo",
   });
   assert.deepEqual(menu(p.said, "Main model"), ["  1) big - alpha  (suggested)", "  2) small - alpha", "  3) plain - alpha", "  4) sol - beta"]);
   assert.deepEqual(menu(p.said, "Cheap model"), ["  1) same as main  (suggested)", "  2) big - alpha", "  3) small - alpha  (cheapest)", "  4) plain - alpha", "  5) sol - beta"]);
   assert.deepEqual(menu(p.said, "Thinking for small"), ["  1) minimal", "  2) low  (suggested)", "  3) medium", "  4) high"]);
   assert.deepEqual(menu(p.said, "Advisor for critical work").at(3), "  4) sol - beta  (suggested)");
-  assert.ok(p.asked.includes("Auto-approve every command? (yes = runs commands that change things without asking) [y/N] "));
+  assert.ok(p.asked.includes("Auto-approve every command? (yes = runs commands that change things without asking) [Y/n] "));
 });
 
 test("a model without thinking levels gets no suffix and no thinking question; bad input re-asks with a hint", async () => {
@@ -116,6 +117,99 @@ test("a re-install shows the current setup and marks current values", async () =
   assert.deepEqual(choices, {
     impl: "alpha/big:medium", fast: null, advisor: "alpha/big:medium", advisorCritical: "alpha/big:high", review: "alpha/small:high", approval: "always-ask",
   });
+});
+
+test("local providers never win cloud suggestions, but explicit and recorded local roles stay selectable", async () => {
+  const local = [
+    { ...models[0], provider: "ollama", selector: "ollama/giant", costOutput: 1000 },
+    { ...models[1], provider: "lm-studio", selector: "lm-studio/cheap", costOutput: 0 },
+    { ...models[0], provider: "llama.cpp", selector: "llama.cpp/large", costOutput: 500 },
+  ];
+  const inventory = [...local, ...models];
+  const defaults = computeDefaults(inventory, YAML.parseDocument(""), null, {});
+  assert.deepEqual(
+    [defaults.impl, defaults.fast, defaults.advisor, defaults.advisorCritical, defaults.review, defaults.approval],
+    ["alpha/big:high", null, "alpha/big:medium", "alpha/big:high", "beta/sol:high", "yolo"],
+  );
+  const p = scripted([""]);
+  assert.deepEqual(await askChoices(p, inventory, defaults), {
+    impl: defaults.impl, fast: null, advisor: defaults.advisor, advisorCritical: defaults.advisorCritical,
+    review: defaults.review, approval: "yolo",
+  });
+  assert.deepEqual(p.asked, ["Use this setup? [Y/n/c=change] "]);
+
+  const selected = computeDefaults(inventory, YAML.parseDocument(""), null, {
+    impl: "ollama/giant", fast: "lm-studio/cheap", advisor: "ollama/giant",
+    "advisor-critical": "llama.cpp/large", review: "lm-studio/cheap", approval: "write",
+  });
+  assert.deepEqual([selected.impl, selected.fast, selected.advisor, selected.advisorCritical, selected.review, selected.approval],
+    ["ollama/giant:high", "lm-studio/cheap:low", "ollama/giant:medium", "llama.cpp/large:high", "lm-studio/cheap:high", "write"]);
+
+  const currentLocalMain = computeDefaults(inventory, YAML.parseDocument("modelRoles:\n  default: ollama/giant:medium\n"), null, {});
+  assert.deepEqual([currentLocalMain.impl, currentLocalMain.fast, currentLocalMain.advisor, currentLocalMain.advisorCritical, currentLocalMain.review],
+    ["ollama/giant:medium", "alpha/small:low", "alpha/big:medium", "alpha/big:high", "alpha/big:high"]);
+
+  const existing = YAML.parseDocument("modelRoles:\n  default: ollama/giant:medium\n  nemo-fast: lm-studio/cheap:low\n  advisor: ollama/giant:low\n  advisor-critical: ollama/giant:xhigh\n  nemo-review: llama.cpp/large:high\n");
+  const kept = computeDefaults(inventory, existing, { choices: { approval: "always-ask" } }, {});
+  assert.deepEqual([kept.impl, kept.fast, kept.advisor, kept.advisorCritical, kept.review, kept.approval],
+    ["ollama/giant:medium", "lm-studio/cheap:low", "ollama/giant:low", "ollama/giant:xhigh", "llama.cpp/large:high", "always-ask"]);
+});
+
+test("changing to local models interactively leaves fast and critical suggestions remote", async () => {
+  const local = [
+    { ...models[0], provider: "ollama", selector: "ollama/giant", costOutput: 1000 },
+    { ...models[1], provider: "lm-studio", selector: "lm-studio/cheap", costOutput: 0 },
+  ];
+  const inventory = [...local, ...models];
+  const p = scripted(["c", "1", "", "", "", "3", "", "", "", "", "", "", ""]);
+  const choices = await askChoices(p, inventory, computeDefaults(inventory, YAML.parseDocument(""), null, {}));
+  assert.equal(p.remaining(), 0);
+  assert.deepEqual([choices.impl, choices.fast, choices.advisor, choices.advisorCritical, choices.review, choices.approval],
+    ["ollama/giant:high", "alpha/small:low", "lm-studio/cheap:medium", "alpha/big:high", "beta/sol:high", "yolo"]);
+  assert.ok(menu(p.said, "Cheap model").includes("  5) small - alpha  (suggested)"));
+  assert.ok(menu(p.said, "Advisor for critical work").includes("  3) big - alpha  (suggested)"));
+  assert.ok(menu(p.said, "Main model").includes("  1) giant - ollama"));
+
+  const doc = YAML.parseDocument("modelRoles:\n  nemo-fast: lm-studio/cheap:low\n");
+  const current = computeDefaults(inventory, doc, { choices: { approval: "write" } }, {});
+  const keep = scripted(["c", "1", "", "", "", "", "", "", "", "", "", "", ""]);
+  const changed = await askChoices(keep, inventory, current);
+  assert.equal(keep.remaining(), 0);
+  assert.equal(changed.fast, "lm-studio/cheap:low");
+  assert.ok(menu(keep.said, "Cheap model").includes("  3) cheap - lm-studio  (current)"));
+
+  const sameAsMain = computeDefaults(inventory, YAML.parseDocument(""), { choices: { fast: null, approval: "write" } }, {});
+  const recorded = scripted(["c", "1", ...Array(10).fill("")]);
+  const retained = await askChoices(recorded, inventory, sameAsMain);
+  assert.equal(recorded.remaining(), 0);
+  assert.equal(retained.fast, null);
+  assert.ok(menu(recorded.said, "Cheap model").includes("  1) same as main  (current)"));
+
+  const twoChanges = scripted(["c", ...Array(10).fill(""), "c", "1", ...Array(11).fill("")]);
+  const secondPass = await askChoices(twoChanges, inventory, computeDefaults(inventory, YAML.parseDocument(""), null, {}));
+  assert.equal(twoChanges.remaining(), 0);
+  assert.equal(secondPass.impl, "ollama/giant:high");
+  assert.equal(secondPass.fast, "alpha/small:low");
+  assert.ok(twoChanges.said.includes("  5) small - alpha  (suggested)"));
+});
+
+test("local-only inventory requires an explicit model choice before suggesting any defaults", () => {
+  const local = [{ ...models[0], provider: "ollama", selector: "ollama/only" }];
+  assert.throws(() => computeDefaults(local, YAML.parseDocument(""), null, {}), /Only local models.*remote provider.*--impl/);
+  const existing = YAML.parseDocument("modelRoles:\n  default: ollama/only:medium\n");
+  assert.equal(computeDefaults(local, existing, null, {}).impl, "ollama/only:medium");
+  assert.equal(computeDefaults(local, existing, { choices: { impl: "ollama/only:medium" } }, {}).impl, "ollama/only:medium");
+  const selected = computeDefaults(local, YAML.parseDocument(""), null, { impl: "ollama/only" });
+  assert.equal(selected.impl, "ollama/only:high");
+  assert.equal(selected.advisor, "ollama/only:medium");
+  assert.equal(selected.review, "ollama/only:high");
+});
+
+test("an existing approval choice beats the new YOLO fallback", () => {
+  const doc = YAML.parseDocument("tools:\n  approvalMode: always-ask\n");
+  assert.equal(computeDefaults(models, doc, null, {}).approval, "always-ask");
+  assert.equal(computeDefaults(models, doc, null, { approval: "write" }).approval, "write");
+  assert.equal(computeDefaults(models, doc, { choices: { approval: "write" } }, {}).approval, "write");
 });
 
 test("a model with missing or null output cost is never taken as the cheapest fast model", async (t) => {

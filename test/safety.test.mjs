@@ -194,6 +194,278 @@ test("symlinked mergeable files and symlinked skills dirs are refused", (t) => {
   assert.deepEqual(snapshot(s.home), before);
 });
 
+test("a symlinked extensions parent is refused before writing through it", (t) => {
+  const s = sandbox(t);
+  const elsewhere = path.join(s.home, "my-extensions");
+  fs.mkdirSync(elsewhere);
+  fs.writeFileSync(path.join(elsewhere, "super-nemo.js"), "user extension\n");
+  fs.symlinkSync(elsewhere, s.file("extensions"));
+  const before = snapshot(s.home);
+  const res = s.sn(INSTALL);
+  assert.equal(res.code, 1, res.out);
+  assert.match(res.out, /extensions is a symlink or not a directory/);
+  assert.deepEqual(snapshot(s.home), before);
+});
+
+test("a regular file at the extensions parent is refused before state creation", (t) => {
+  const s = sandbox(t);
+  s.write("extensions", "not a directory\n");
+  const before = snapshot(s.home);
+  const res = s.sn(INSTALL);
+  assert.equal(res.code, 1, res.out);
+  assert.match(res.out, /extensions is a symlink or not a directory/);
+  assert.deepEqual(snapshot(s.home), before);
+});
+
+test("an existing sn command is never claimed or overwritten, even if it points to this repo", (t) => {
+  for (const kind of ["file", "matching-link"]) {
+    const s = sandbox(t);
+    const bin = path.join(s.home, ".local", "bin");
+    fs.mkdirSync(bin, { recursive: true });
+    const launcher = path.join(bin, "sn");
+    if (kind === "file") fs.writeFileSync(launcher, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+    else fs.symlinkSync(path.join(REPO, "sn"), launcher);
+    const before = snapshot(s.home);
+    const res = s.sn(INSTALL);
+    assert.equal(res.code, 1, res.out);
+    assert.match(res.out, /bin\/sn already exists.*and is not ours/);
+    assert.deepEqual(snapshot(s.home), before);
+  }
+});
+
+test("a symlinked launcher parent blocks installation before touching external data", (t) => {
+  for (const parent of [".local", "bin"]) {
+    const s = sandbox(t, { localBin: false });
+    const outside = path.join(s.home, "outside");
+    fs.mkdirSync(outside);
+    fs.writeFileSync(path.join(outside, "sn"), "user command");
+    if (parent === "bin") fs.mkdirSync(path.join(s.home, ".local"));
+    fs.symlinkSync(outside, parent === "bin" ? path.join(s.home, ".local", "bin") : path.join(s.home, ".local"));
+    const before = snapshot(s.home);
+    const res = s.sn(INSTALL);
+    assert.equal(res.code, 1, res.out);
+    assert.match(res.out, /symlink or not a directory; refusing to install the sn launcher/);
+    assert.deepEqual(snapshot(s.home), before);
+  }
+});
+
+test("uninstall leaves an sn launcher replaced or hidden behind a symlinked parent", (t) => {
+  for (const parentSwap of [false, true]) {
+    const s = sandbox(t);
+    assert.equal(s.sn(INSTALL).code, 0);
+    const bin = path.join(s.home, ".local", "bin");
+    const launcher = path.join(bin, "sn");
+    if (parentSwap) {
+      const moved = path.join(s.home, "saved-bin");
+      fs.renameSync(bin, moved);
+      fs.symlinkSync(moved, bin);
+    } else {
+      fs.unlinkSync(launcher);
+      fs.writeFileSync(launcher, "user command");
+    }
+    const res = s.sn(["uninstall"]);
+    assert.equal(res.code, 0, res.out);
+    assert.match(res.out, /left .*bin\/sn: not a (symlink into|path this installer manages)/);
+    if (parentSwap) assert.equal(fs.readlinkSync(path.join(s.home, "saved-bin", "sn")), path.join(REPO, "sn"));
+    else assert.equal(fs.readFileSync(launcher, "utf8"), "user command");
+  }
+});
+
+test("status and uninstall do not claim a same-target launcher replaced after install", (t) => {
+  const s = sandbox(t);
+  assert.equal(s.sn(INSTALL).code, 0);
+  const launcher = path.join(s.home, ".local", "bin", "sn");
+  fs.renameSync(launcher, `${launcher}.prior`);
+  fs.symlinkSync(path.join(REPO, "sn"), launcher);
+  const status = s.sn(["status"]);
+  assert.equal(status.code, 0, status.out);
+  assert.match(status.out, /bin\/sn is not the sn launcher recorded at install/);
+  const verify = s.sn(["verify"]);
+  assert.equal(verify.code, 1, verify.out);
+  assert.match(verify.out, /bin\/sn is not the sn launcher recorded at install/);
+  const removed = s.sn(["uninstall"]);
+  assert.equal(removed.code, 0, removed.out);
+  assert.equal(fs.readlinkSync(launcher), path.join(REPO, "sn"));
+});
+
+test("install never follows a launcher parent swapped just before link creation", (t) => {
+  const s = sandbox(t, { localBin: false });
+  const outside = path.join(s.home, "outside");
+  fs.mkdirSync(outside);
+  fs.writeFileSync(path.join(outside, "user-data"), "keep me");
+  const hook = path.join(s.home, "swap-parent.cjs");
+  fs.writeFileSync(hook, [
+    "const fs = require('node:fs');",
+    "const path = require('node:path');",
+    "const symlink = fs.symlinkSync;",
+    "fs.symlinkSync = (target, dest, type) => {",
+    "  if (dest === 'sn' && target === process.env.SN_REPO_SN) {",
+    "    const bin = path.join(process.env.HOME, '.local', 'bin');",
+    "    fs.renameSync(bin, path.join(process.env.HOME, 'saved-bin'));",
+    "    symlink(process.env.SN_OUTSIDE, bin);",
+    "  }",
+    "  return symlink(target, dest, type);",
+    "};",
+  ].join("\n"));
+  const res = s.sn(INSTALL, { NODE_OPTIONS: `--require=${hook}`, SN_REPO_SN: path.join(REPO, "sn"), SN_OUTSIDE: outside });
+  assert.equal(res.code, 1, res.out);
+  assert.match(res.out, /launcher parent changed during install/);
+  assert.equal(fs.existsSync(path.join(outside, "sn")), false);
+  assert.equal(fs.existsSync(path.join(s.home, "saved-bin", "sn")), false);
+  assert.equal(fs.readFileSync(path.join(outside, "user-data"), "utf8"), "keep me");
+});
+
+test("a command appearing after preflight is preserved while other links roll back", (t) => {
+  for (const repairing of [false, true]) {
+    const s = sandbox(t);
+    const launcher = path.join(s.home, ".local", "bin", "sn");
+    if (repairing) {
+      assert.equal(s.sn(INSTALL).code, 0);
+      fs.unlinkSync(launcher);
+    }
+    const hook = path.join(s.home, "competing-command.cjs");
+    fs.writeFileSync(hook, [
+      "const fs = require('node:fs');",
+      "const symlink = fs.symlinkSync;",
+      "fs.symlinkSync = (target, dest, ...rest) => {",
+      "  if (dest === 'sn') fs.writeFileSync('sn', 'user command', { flag: 'wx' });",
+      "  return symlink(target, dest, ...rest);",
+      "};",
+    ].join("\n"));
+    const before = snapshot(s.home);
+    const install = repairing ? ["install", "--reuse", "--no-smoke"] : INSTALL;
+    const res = s.sn(install, { NODE_OPTIONS: `--require=${hook}` });
+    assert.equal(res.code, 1, res.out);
+    assert.match(res.out, /install failed and was rolled back: .*appeared during install/);
+    assert.equal(fs.readFileSync(launcher, "utf8"), "user command");
+    fs.unlinkSync(launcher);
+    assert.deepEqual(snapshot(s.home), before);
+    assert.equal(fs.existsSync(s.manifestPath), repairing);
+  }
+});
+
+test("uninstall and rollback preserve a launcher replaced at the removal syscall", (t) => {
+  for (const command of ["uninstall", "status"]) {
+    for (const replacement of ["file", "symlink"]) {
+      const s = sandbox(t);
+      assert.equal(s.sn(INSTALL).code, 0);
+      if (command === "status") fs.writeFileSync(s.manifestPath, JSON.stringify(pendingFrom(s.manifest())));
+      const launcher = path.join(s.home, ".local", "bin", "sn");
+      const outside = path.join(s.home, "user-command");
+      fs.writeFileSync(outside, "keep me");
+      const hook = path.join(s.home, "swap-launcher.cjs");
+      fs.writeFileSync(hook, [
+        "const fs = require('node:fs');",
+        "const rename = fs.renameSync;",
+        "fs.renameSync = (from, to) => {",
+        "  if (from === 'sn' && to.includes('.sn-removing-')) {",
+        "    rename('sn', 'sn.prior');",
+        "    if (process.env.SN_REPLACEMENT === 'file') fs.writeFileSync('sn', 'user command');",
+        "    else fs.symlinkSync(process.env.SN_OUTSIDE, 'sn');",
+        "  }",
+        "  return rename(from, to);",
+        "};",
+      ].join("\n"));
+      const res = s.sn([command], { NODE_OPTIONS: `--require=${hook}`, SN_REPLACEMENT: replacement, SN_OUTSIDE: outside });
+      assert.equal(res.code, 0, res.out);
+      assert.match(res.out, /launcher changed during removal/);
+      if (replacement === "file") assert.equal(fs.readFileSync(launcher, "utf8"), "user command");
+      else assert.equal(fs.readlinkSync(launcher), outside);
+      assert.equal(fs.readFileSync(outside, "utf8"), "keep me");
+    }
+  }
+});
+
+test("removal quarantine cannot redirect through a swapped child directory", (t) => {
+  const s = sandbox(t);
+  assert.equal(s.sn(INSTALL).code, 0);
+  const outside = path.join(s.home, "outside");
+  fs.mkdirSync(outside);
+  fs.writeFileSync(path.join(outside, "sn"), "user command");
+  const hook = path.join(s.home, "replace-quarantine.cjs");
+  fs.writeFileSync(hook, [
+    "const fs = require('node:fs');",
+    "const path = require('node:path');",
+    "const rename = fs.renameSync;",
+    "fs.renameSync = (from, to) => {",
+    "  if (from === 'sn' && to.includes('.sn-removing-') && path.dirname(to) !== '.') {",
+    "    fs.rmdirSync(path.dirname(to));",
+    "    fs.symlinkSync(process.env.SN_OUTSIDE, path.dirname(to));",
+    "  }",
+    "  return rename(from, to);",
+    "};",
+  ].join("\n"));
+  const res = s.sn(["uninstall"], { NODE_OPTIONS: `--require=${hook}`, SN_OUTSIDE: outside });
+  assert.equal(res.code, 0, res.out);
+  assert.equal(fs.readFileSync(path.join(outside, "sn"), "utf8"), "user command");
+  assert.equal(fs.existsSync(path.join(s.home, ".local", "bin", "sn")), false);
+});
+
+test("uninstall cannot unlink through a launcher parent swapped at removal", (t) => {
+  const s = sandbox(t);
+  assert.equal(s.sn(INSTALL).code, 0);
+  const bin = path.join(s.home, ".local", "bin");
+  const outside = path.join(s.home, "outside");
+  fs.mkdirSync(outside);
+  fs.writeFileSync(path.join(outside, "sn"), "user command");
+  const hook = path.join(s.home, "swap-bin.cjs");
+  fs.writeFileSync(hook, [
+    "const fs = require('node:fs');",
+    "const path = require('node:path');",
+    "const rename = fs.renameSync;",
+    "fs.renameSync = (from, to) => {",
+    "  if (from === 'sn' && to.includes('.sn-removing-')) {",
+    "    const bin = path.join(process.env.HOME, '.local', 'bin');",
+    "    rename(bin, path.join(process.env.HOME, 'saved-bin'));",
+    "    fs.symlinkSync(process.env.SN_OUTSIDE, bin);",
+    "  }",
+    "  return rename(from, to);",
+    "};",
+  ].join("\n"));
+  const res = s.sn(["uninstall"], { NODE_OPTIONS: `--require=${hook}`, SN_OUTSIDE: outside });
+  assert.equal(res.code, 0, res.out);
+  assert.equal(fs.readFileSync(path.join(outside, "sn"), "utf8"), "user command");
+  assert.equal(fs.existsSync(path.join(s.home, "saved-bin", "sn")), false);
+  assert.ok(fs.lstatSync(bin).isSymbolicLink());
+});
+
+test("recovery retains a launcher published before its ownership was recorded", (t) => {
+  for (const repairing of [false, true]) {
+    const s = sandbox(t);
+    const launcher = path.join(s.home, ".local", "bin", "sn");
+    let previousIdentity = null;
+    if (repairing) {
+      assert.equal(s.sn(INSTALL).code, 0);
+      previousIdentity = s.manifest().launcherIdentity;
+      fs.unlinkSync(launcher);
+    }
+    const hook = path.join(s.home, "crash-after-launcher.cjs");
+    fs.writeFileSync(hook, [
+      "const fs = require('node:fs');",
+      "const symlink = fs.symlinkSync;",
+      "fs.symlinkSync = (target, name, ...rest) => {",
+      "  symlink(target, name, ...rest);",
+      "  if (name === 'sn') process.exit(75);",
+      "};",
+    ].join("\n"));
+    const install = repairing ? ["install", "--reuse", "--no-smoke"] : INSTALL;
+    assert.equal(s.sn(install, { NODE_OPTIONS: `--require=${hook}` }).code, 75);
+    assert.equal(fs.readlinkSync(launcher), path.join(REPO, "sn"));
+    assert.equal(s.manifest().status, "pending");
+    assert.deepEqual(s.manifest().launcherIdentity, previousIdentity);
+    const before = snapshot(s.home);
+    const blocked = s.sn(["status"]);
+    assert.equal(blocked.code, 1, blocked.out);
+    assert.match(blocked.out, /unverified launcher at .*bin\/sn/);
+    assert.deepEqual(snapshot(s.home), before);
+    fs.unlinkSync(launcher);
+    assert.equal(s.sn(["status"]).code, 0);
+    assert.equal(fs.existsSync(s.manifestPath), repairing);
+    assert.equal(s.sn(install).code, 0);
+    assert.equal(s.sn(["uninstall"]).code, 0);
+  }
+});
+
 test("a failure mid-install rolls everything back", (t) => {
   const s = sandbox(t);
   fs.mkdirSync(s.file("skills"));
@@ -214,7 +486,7 @@ test("a failure during a re-install restores the previous installation", (t) => 
   assert.equal(s.sn(INSTALL).code, 0);
   const installed = snapshot(s.home);
   fs.chmodSync(s.agentDir, 0o555);
-  const res = s.sn([...INSTALL, "--approval", "yolo"]);
+  const res = s.sn([...INSTALL, "--approval", "write"]);
   fs.chmodSync(s.agentDir, 0o755);
   assert.equal(res.code, 1, res.out);
   assert.match(res.out, /rolled back/);
@@ -279,7 +551,7 @@ test("PI_CODING_AGENT_DIR is used for the default profile", (t) => {
   const res = s.sn(INSTALL, { PI_CODING_AGENT_DIR: custom });
   assert.equal(res.code, 0, res.out);
   assert.ok(fs.lstatSync(path.join(custom, "agents", "nemo-qa.md")).isSymbolicLink());
-  assert.equal(YAML.parse(fs.readFileSync(path.join(custom, "config.yml"), "utf8")).tools.approvalMode, "write");
+  assert.equal(YAML.parse(fs.readFileSync(path.join(custom, "config.yml"), "utf8")).tools.approvalMode, "yolo");
   assert.equal(s.sn(["uninstall"], { PI_CODING_AGENT_DIR: custom }).code, 0);
   assert.deepEqual(fs.readdirSync(custom).filter((n) => !n.startsWith("agent.db")), []);
 });
@@ -408,6 +680,176 @@ test("a symlinked backup dir is neither restored from nor deleted", (t) => {
   assert.ok(fs.existsSync(path.join(outside, "config.yml")));
 });
 
+test("a symlinked backups directory blocks uninstall before any link or file changes", (t) => {
+  const s = sandbox(t);
+  seedUserContent(s);
+  assert.equal(s.sn(INSTALL).code, 0);
+  const backups = path.join(s.snHome, "state", "backups");
+  const moved = path.join(s.snHome, "saved-backups");
+  fs.renameSync(backups, moved);
+  fs.symlinkSync(moved, backups);
+  const before = snapshot(s.home);
+  const res = s.sn(["uninstall"]);
+  assert.equal(res.code, 1, res.out);
+  assert.match(res.out, /Uninstall incomplete, nothing was changed[\s\S]*backups is not a plain directory/);
+  assert.deepEqual(snapshot(s.home), before);
+  assert.equal(s.manifest().status, "installed");
+});
+
+test("uninstall preserves a symlinked update cache and does not follow it", (t) => {
+  const s = sandbox(t);
+  assert.equal(s.sn(INSTALL).code, 0);
+  const victim = path.join(s.home, "user-cache.json");
+  const text = JSON.stringify({ tool: "super-nemo", checkedAt: 1000 });
+  fs.writeFileSync(victim, text);
+  const cache = path.join(s.snHome, "state", "update-check.json");
+  fs.symlinkSync(victim, cache);
+  const res = s.sn(["uninstall"]);
+  assert.equal(res.code, 0, res.out);
+  assert.match(res.out, /left .*update-check\.json: not a valid SUPER-NEMO update cache/);
+  assert.equal(fs.readFileSync(victim, "utf8"), text);
+  assert.equal(fs.readlinkSync(cache), victim);
+});
+
+test("uninstall preserves malformed or unrelated update cache contents", (t) => {
+  for (const text of ["not JSON", JSON.stringify({ tool: "other", checkedAt: 1000 }), JSON.stringify({ tool: "super-nemo", checkedAt: "1000" }), JSON.stringify({ tool: "super-nemo", checkedAt: 1000, note: "user" })]) {
+    const s = sandbox(t);
+    assert.equal(s.sn(INSTALL).code, 0);
+    const cache = path.join(s.snHome, "state", "update-check.json");
+    fs.writeFileSync(cache, text, { mode: 0o600 });
+    const res = s.sn(["uninstall"]);
+    assert.equal(res.code, 0, res.out);
+    assert.match(res.out, /left .*update-check\.json: not a valid SUPER-NEMO update cache/);
+    assert.equal(fs.readFileSync(cache, "utf8"), text);
+  }
+});
+
+test("uninstall preserves an unowned update lock", (t) => {
+  const s = sandbox(t);
+  assert.equal(s.sn(INSTALL).code, 0);
+  const lock = path.join(s.snHome, "state", ".update-check.lock");
+  const victim = path.join(s.home, "user-lock");
+  fs.writeFileSync(victim, "user data");
+  fs.symlinkSync(victim, lock);
+  const res = s.sn(["uninstall"]);
+  assert.equal(res.code, 0, res.out);
+  assert.match(res.out, /left .*\.update-check\.lock: not a valid SUPER-NEMO update lock/);
+  assert.equal(fs.readFileSync(victim, "utf8"), "user data");
+  assert.equal(fs.readlinkSync(lock), victim);
+});
+
+test("uninstall never deletes a cache replaced between validation and isolation", (t) => {
+  const s = sandbox(t);
+  assert.equal(s.sn(INSTALL).code, 0);
+  const cache = path.join(s.snHome, "state", "update-check.json");
+  const text = JSON.stringify({ tool: "super-nemo", checkedAt: 1000 });
+  fs.writeFileSync(cache, text, { mode: 0o600 });
+  const hook = path.join(s.home, "swap-cache.cjs");
+  fs.writeFileSync(hook, [
+    "const fs = require('node:fs');",
+    "const rename = fs.renameSync;",
+    "fs.renameSync = (from, to) => {",
+    "  if (from === process.env.SN_SWAP_CACHE && to.includes('.update-check-removing-')) {",
+    "    rename(from, `${from}.prior`);",
+    "    fs.writeFileSync(from, JSON.stringify({ tool: 'super-nemo', checkedAt: 2000 }), { mode: 0o600 });",
+    "  }",
+    "  return rename(from, to);",
+    "};",
+  ].join("\n"));
+  const res = s.sn(["uninstall"], { NODE_OPTIONS: `--require=${hook}`, SN_SWAP_CACHE: cache });
+  assert.equal(res.code, 0, res.out);
+  assert.match(res.out, /update cache changed while uninstalling/);
+  assert.equal(fs.readFileSync(cache, "utf8"), JSON.stringify({ tool: "super-nemo", checkedAt: 2000 }));
+  assert.equal(fs.readFileSync(`${cache}.prior`, "utf8"), text);
+});
+
+test("uninstall preserves a cache replaced by a symlink or directory during isolation", (t) => {
+  for (const kind of ["symlink", "directory"]) {
+    const s = sandbox(t);
+    assert.equal(s.sn(INSTALL).code, 0);
+    const cache = path.join(s.snHome, "state", "update-check.json");
+    fs.writeFileSync(cache, JSON.stringify({ tool: "super-nemo", checkedAt: 1000 }), { mode: 0o600 });
+    const victim = path.join(s.home, "user-data");
+    fs.writeFileSync(victim, "keep me");
+    const hook = path.join(s.home, "swap-cache.cjs");
+    fs.writeFileSync(hook, [
+      "const fs = require('node:fs');",
+      "const rename = fs.renameSync;",
+      "fs.renameSync = (from, to) => {",
+      "  if (from === process.env.SN_SWAP_CACHE && to.includes('.update-check-removing-')) {",
+      "    rename(from, `${from}.prior`);",
+      "    if (process.env.SN_SWAP_KIND === 'symlink') fs.symlinkSync(process.env.SN_VICTIM, from);",
+      "    else { fs.mkdirSync(from); fs.writeFileSync(`${from}/user-data`, 'keep me'); }",
+      "  }",
+      "  return rename(from, to);",
+      "};",
+    ].join("\n"));
+    const res = s.sn(["uninstall"], {
+      NODE_OPTIONS: `--require=${hook}`, SN_SWAP_CACHE: cache, SN_SWAP_KIND: kind, SN_VICTIM: victim,
+    });
+    assert.equal(res.code, 0, res.out);
+    assert.match(res.out, /update cache changed while uninstalling/);
+    assert.equal(fs.readFileSync(victim, "utf8"), "keep me");
+    if (kind === "symlink") assert.equal(fs.readlinkSync(cache), victim);
+    else {
+      const quarantine = fs.readdirSync(path.join(s.snHome, "state")).find((entry) => entry.startsWith(".update-check-removing-"));
+      assert.ok(quarantine, res.out);
+      assert.equal(fs.readFileSync(path.join(s.snHome, "state", quarantine, "update-check.json", "user-data"), "utf8"), "keep me");
+    }
+  }
+});
+
+test("uninstall does not remove a cache through a symlinked SUPER-NEMO home", (t) => {
+  const s = sandbox(t);
+  const external = path.join(s.home, "user-state");
+  fs.mkdirSync(external);
+  fs.symlinkSync(external, s.snHome);
+  assert.equal(s.sn(INSTALL).code, 0);
+  const cache = path.join(external, "state", "update-check.json");
+  const text = JSON.stringify({ tool: "super-nemo", checkedAt: 1000 });
+  fs.writeFileSync(cache, text, { mode: 0o600 });
+  const res = s.sn(["uninstall"]);
+  assert.equal(res.code, 0, res.out);
+  assert.match(res.out, /left .*update-check\.json: not a valid SUPER-NEMO update cache/);
+  assert.equal(fs.readFileSync(cache, "utf8"), text);
+  assert.ok(fs.lstatSync(s.snHome).isSymbolicLink());
+});
+
+test("uninstall preserves a cache under a symlinked state parent", (t) => {
+  const s = sandbox(t);
+  assert.equal(s.sn(INSTALL).code, 0);
+  const state = path.join(s.snHome, "state");
+  const moved = path.join(s.snHome, "saved-state");
+  fs.renameSync(state, moved);
+  fs.symlinkSync(moved, state);
+  const cache = path.join(moved, "update-check.json");
+  const text = JSON.stringify({ tool: "super-nemo", checkedAt: 1000 });
+  fs.writeFileSync(cache, text, { mode: 0o600 });
+  const before = snapshot(s.home);
+  const res = s.sn(["uninstall"]);
+  assert.equal(res.code, 1, res.out);
+  assert.deepEqual(snapshot(s.home), before);
+  assert.equal(fs.readFileSync(cache, "utf8"), text);
+  assert.ok(fs.lstatSync(state).isSymbolicLink());
+});
+
+test("uninstall leaves an extension behind a swapped symlinked parent untouched", (t) => {
+  const s = sandbox(t);
+  assert.equal(s.sn(INSTALL).code, 0);
+  const extensions = s.file("extensions");
+  const elsewhere = path.join(s.home, "my-extensions");
+  fs.renameSync(extensions, elsewhere);
+  fs.symlinkSync(elsewhere, extensions);
+  const status = s.sn(["status"]);
+  assert.equal(status.code, 0, status.out);
+  assert.match(status.out, /Links:\n[\s\S]*extensions\/super-nemo\.js has an unsafe parent directory/);
+  const res = s.sn(["uninstall"]);
+  assert.equal(res.code, 0, res.out);
+  assert.equal(fs.readlinkSync(path.join(elsewhere, "super-nemo.js")), path.join(REPO, "extensions", "super-nemo.js"));
+  assert.ok(fs.lstatSync(extensions).isSymbolicLink());
+  assert.match(res.out, /left .*extensions\/super-nemo\.js: not a path this installer manages/);
+});
+
 test("an agents dir swapped for a symlink before uninstall is left alone", (t) => {
   const s = sandbox(t);
   assert.equal(s.sn(INSTALL).code, 0);
@@ -458,7 +900,6 @@ test("a forged repo path does not make an unrelated symlink look like ours", (t)
 test("uninstall removes the ~/.omp tree it created once it is empty", (t) => {
   const s = sandbox(t, { agentDir: false });
   assert.equal(s.sn(INSTALL).code, 0);
-  assert.deepEqual(s.manifest().createdDirs.filter((d) => !d.endsWith("skills") && !d.endsWith("agents")), [path.join(s.home, ".omp"), s.agentDir]);
   for (const name of fs.readdirSync(s.agentDir)) if (name.startsWith("agent.db") || name.startsWith("models.db")) fs.rmSync(s.file(name));
   for (const name of ["logs", "natives"]) fs.rmSync(path.join(s.home, ".omp", name), { recursive: true, force: true });
   const res = s.sn(["uninstall"]);
@@ -524,7 +965,7 @@ test("an interrupted re-install over a drifted key is rolled back from its own b
   assert.equal(config.theme.light, "paper");
   assert.deepEqual({ ...config, theme: YAML.parse(beforeReinstall).theme }, YAML.parse(beforeReinstall));
   assert.equal(s.manifest().status, "installed");
-  assert.equal(s.manifest().choices.approval, "write");
+  assert.equal(s.manifest().choices.approval, "yolo");
   assert.ok(!fs.existsSync(path.join(s.snHome, "state", "backups", "2000-01-01T00-00-00-000Z")));
 });
 

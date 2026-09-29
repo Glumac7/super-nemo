@@ -26,11 +26,16 @@ test("bootstrap installs from a private-style remote, re-runs idempotently and u
   assert.ok(fs.lstatSync(s.clone).isDirectory());
   assert.equal(fs.readlinkSync(path.join(s.snHome, "current")), s.clone);
   assert.equal(fs.readlinkSync(path.join(s.agentDir, "skills", "super-nemo")), path.join(s.clone, "skills", "super-nemo"));
+  assert.equal(fs.readlinkSync(path.join(s.agentDir, "extensions", "super-nemo.js")), path.join(s.clone, "extensions", "super-nemo.js"));
   const m = s.manifest();
   assert.deepEqual(m.clone, { path: s.clone, createdByBootstrap: true, origin: r.url });
   assert.equal(m.createdHome, true);
   const verify = s.run(path.join(s.clone, "sn"), ["verify"]);
   assert.equal(verify.code, 0, verify.out);
+  const cache = path.join(s.snHome, "state", "update-check.json");
+  fs.writeFileSync(cache, JSON.stringify({ tool: "super-nemo", checkedAt: Date.now() }), { mode: 0o600 });
+  const lock = path.join(s.snHome, "state", ".update-check.lock");
+  fs.writeFileSync(lock, `${JSON.stringify({ tool: "super-nemo", pid: process.pid, claimedAt: Date.now() })}\n`, { mode: 0o600 });
 
   const installed = withoutGitDir(snapshot(s.home));
   const again = await s.bootstrap(BOOT, { SN_REPO_URL: r.url });
@@ -41,6 +46,8 @@ test("bootstrap installs from a private-style remote, re-runs idempotently and u
 
   const un = s.run(path.join(s.clone, "sn"), ["uninstall"]);
   assert.equal(un.code, 0, un.out);
+  assert.equal(fs.lstatSync(cache, { throwIfNoEntry: false }), undefined);
+  assert.equal(fs.lstatSync(lock, { throwIfNoEntry: false }), undefined);
   assert.ok(!fs.existsSync(s.snHome));
   assert.deepEqual(snapshot(s.home), before);
   assert.deepEqual(globalGitConfig(s), gitBefore);
@@ -290,7 +297,7 @@ test("prompts work when the bootstrap script arrives on stdin", async (t) => {
   assert.match(out, /Uninstall: ~\/\.super-nemo\/repo\/sn uninstall/);
   assert.doesNotMatch(out, /update later with|uninstall with:/);
   assert.equal(s.manifest().choices.advisor, null);
-  assert.equal(s.manifest().choices.approval, "write");
+  assert.equal(s.manifest().choices.approval, "yolo");
 });
 
 test("re-running the one-liner fast-forwards the clone through sn update; a dirty clone stops it", async (t) => {

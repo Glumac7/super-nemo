@@ -54,12 +54,12 @@ test("status, a drift stop and uninstall name changed settings in plain words, w
   setIn(s, (doc) => {
     doc.setIn(["modelRoles", "nemo-review"], "alpha/small:low");
     doc.setIn(["task", "agentModelOverrides", "scout"], "@nemo-review");
-    doc.setIn(["tools", "approvalMode"], "yolo");
+    doc.setIn(["tools", "approvalMode"], "write");
   });
   const expected = [
     /^ {2}! Reviewers: you changed this to small - low \(config\.yml: modelRoles\.nemo-review\)$/m,
     /^ {2}! Model for scout: you changed this to Reviewers model \(config\.yml: task\.agentModelOverrides\.scout\)$/m,
-    /^ {2}! Auto-approve: you changed this to on \(config\.yml: tools\.approvalMode\)$/m,
+    /^ {2}! Auto-approve: you changed this to off \(config\.yml: tools\.approvalMode\)$/m,
   ];
   const st = s.sn(["status"]);
   assert.equal(st.code, 0, st.out);
@@ -70,7 +70,7 @@ test("status, a drift stop and uninstall name changed settings in plain words, w
   assert.equal(check.code, 1, check.out);
   assert.match(check.out, /^x Reviewers: is small - low, expected sol - high \(config\.yml: modelRoles\.nemo-review\)$/m);
   assert.match(check.out, /^x Model for scout: is Reviewers model, expected same as main \(config\.yml: task\.agentModelOverrides\.scout\)$/m);
-  assert.match(check.out, /^x Auto-approve: is on, expected off \(config\.yml: tools\.approvalMode\)$/m);
+  assert.match(check.out, /^x Auto-approve: is off, expected on \(config\.yml: tools\.approvalMode\)$/m);
 
   const stop = s.sn([...INSTALL, "--review", "beta/sol:medium"]);
   assert.equal(stop.code, 3, stop.out);
@@ -134,6 +134,44 @@ test("prior values come from the first install and survive later runs with other
   setIn(s, (doc) => doc.setIn(["theme"], "dark"));
   assert.equal(s.sn(["uninstall"]).code, 0);
   assert.deepEqual(YAML.parse(s.read("config.yml")), { ...YAML.parse(original), theme: "dark" });
+});
+
+test("a pre-extension manifest upgrades, then removes only its new extension link", (t) => {
+  const s = sandbox(t);
+  const before = snapshot(s.home);
+  assert.equal(s.sn(INSTALL).code, 0);
+  const extension = path.join(s.agentDir, "extensions", "super-nemo.js");
+  const old = s.manifest();
+  old.symlinks = old.symlinks.filter((p) => p !== extension);
+  old.createdDirs = old.createdDirs.filter((p) => p !== path.dirname(extension));
+  fs.writeFileSync(s.manifestPath, JSON.stringify(old));
+  fs.unlinkSync(extension);
+  fs.rmdirSync(path.dirname(extension));
+  const upgraded = s.sn(INSTALL);
+  assert.equal(upgraded.code, 0, upgraded.out);
+  assert.match(upgraded.out, /add 1 extension to OMP/);
+  assert.equal(fs.readlinkSync(extension), path.join(s.manifest().repo, "extensions", "super-nemo.js"));
+  assert.ok(s.manifest().createdDirs.includes(path.dirname(extension)));
+  assert.equal(s.sn(["uninstall"]).code, 0);
+  assert.deepEqual(snapshot(s.home), before);
+});
+
+test("an extension link into another checkout cannot be taken over or deleted", (t) => {
+  const s = sandbox(t);
+  assert.equal(s.sn(INSTALL).code, 0);
+  const extension = path.join(s.agentDir, "extensions", "super-nemo.js");
+  const other = path.join(s.home, "another-checkout", "extensions", "super-nemo.js");
+  fs.unlinkSync(extension);
+  fs.symlinkSync(other, extension);
+  const before = snapshot(s.home);
+  const install = s.sn(INSTALL);
+  assert.equal(install.code, 1, install.out);
+  assert.match(install.out, /extensions\/super-nemo\.js already exists \(symlink to .*another-checkout/);
+  assert.deepEqual(snapshot(s.home), before);
+  const un = s.sn(["uninstall"]);
+  assert.equal(un.code, 0, un.out);
+  assert.match(un.out, /left .*extensions\/super-nemo\.js: not a symlink into/);
+  assert.equal(fs.readlinkSync(extension), other);
 });
 
 test("links into another checkout are conflicts, not ours", (t) => {

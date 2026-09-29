@@ -14,6 +14,7 @@ Check:
 - Comments that restate code or justify decisions (remove); only non-obvious "why" stays.
 - Tests assert behavior, not implementation; no over-mocking.
 - Matches repo conventions (naming, imports, structure).
+- Trace changed public functions through their callers when judging an API simplification; a locally cleaner signature is not a win if it breaks consumers or duplicates conversion elsewhere.
 
 Use provided lint/format/typecheck results; if none ran, say so.
 

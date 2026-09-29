@@ -30,9 +30,10 @@ test("update fast-forwards, re-applies the recorded answers and reports the chan
   assert.match(res.out, new RegExp(`Updating SUPER-NEMO: ${old.slice(0, 12)}\\.\\.${sha.slice(0, 12)} \\(1 commit\\)\\n  - add a skill\\n`));
   assert.match(res.out, /- add 1 skill to OMP/);
   assert.match(res.out, /link .*skills\/nemo-extra ->/);
-  assert.match(res.out, /OK Linked agents and skills\n/);
+  assert.match(res.out, /OK Linked agents, skills and extensions\n/);
   assert.equal(s.git(s.clone, ["rev-parse", "HEAD"]).out.trim(), sha);
   assert.equal(fs.readlinkSync(path.join(s.agentDir, "skills", "nemo-extra")), path.join(s.clone, "skills", "nemo-extra"));
+  assert.equal(fs.readlinkSync(path.join(s.agentDir, "extensions", "super-nemo.js")), path.join(s.clone, "extensions", "super-nemo.js"));
   const config = YAML.parse(s.read("config.yml"));
   assert.equal(config.tools.approvalMode, "always-ask");
   assert.equal(config.modelRoles["nemo-fast"], "alpha/small:low");
@@ -130,6 +131,25 @@ test("update refuses a dirty clone or a diverged branch and changes nothing", as
   assert.equal(res2.code, 1, res2.out);
   assert.match(res2.out, /has commits that are not on origin\/main, so it cannot be fast-forwarded/);
   assert.deepEqual(withoutRemoteRefs(snapshot(s.home)), withoutRemoteRefs(diverged));
+});
+
+test("update retires an extension omitted by a newer checkout without leaving a broken link", async (t) => {
+  const s = sandbox(t);
+  const r = remote(t);
+  const before = snapshot(s.home);
+  const installed = await s.bootstrap(["--yes", "--no-smoke"], { SN_REPO_URL: r.url });
+  assert.equal(installed.code, 0, installed.out);
+  const link = path.join(s.agentDir, "extensions", "super-nemo.js");
+  assert.equal(fs.readlinkSync(link), path.join(s.clone, "extensions", "super-nemo.js"));
+  r.commit("retire extension", (w) => fs.unlinkSync(path.join(w, "extensions", "super-nemo.js")));
+  const up = s.run(path.join(s.clone, "sn"), ["update"]);
+  assert.equal(up.code, 0, up.out);
+  assert.match(up.out, /remove 1 extension no longer shipped/);
+  assert.equal(fs.lstatSync(link, { throwIfNoEntry: false }), undefined);
+  assert.ok(!s.manifest().symlinks.includes(link));
+  assert.equal(s.run(path.join(s.clone, "sn"), ["verify"]).code, 0);
+  assert.equal(s.run(path.join(s.clone, "sn"), ["uninstall"]).code, 0);
+  assert.deepEqual(snapshot(s.home), before);
 });
 
 test("update removes the link of a skill the new revision no longer ships, and uninstall leaves nothing", async (t) => {
@@ -245,7 +265,9 @@ test("update --dry-run lists the new commits and changes nothing else", async (t
   const head = s.git(s.clone, ["rev-parse", "HEAD"]).out;
   r.commit("pending change", (w) => fs.writeFileSync(path.join(w, "CHANGELOG.txt"), "x\n"));
   const before = withoutRemoteRefs(snapshot(s.home));
-  const res = s.update(["--dry-run"]);
+  const bin = path.join(s.home, ".local", "bin");
+  assert.equal(fs.readlinkSync(path.join(bin, "sn")), path.join(s.clone, "sn"));
+  const res = s.run("sn", ["update", "--dry-run"], { PATH: `${bin}${path.delimiter}${s.env.PATH}` });
   assert.equal(res.code, 0, res.out);
   assert.match(res.out, /Would update .*\n.*pending change/);
   assert.equal(s.git(s.clone, ["rev-parse", "HEAD"]).out, head);

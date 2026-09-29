@@ -21,7 +21,7 @@ test("a fresh interactive install that accepts every default asks exactly three 
   assert.match(questions[1], /This will[\s\S]*Apply\? \[Y\/n\] $/);
   assert.match(questions[2], /Checked installation[\s\S]*Run a quick live test\? OMP does two tiny tasks in a throwaway folder .*\[y\/N\] $/);
   assert.match(out, SGR);
-  assert.match(out, /✓\x1b\[0m Linked agents and skills/);
+  assert.match(out, /✓\x1b\[0m Linked agents, skills and extensions/);
   assert.match(out, /Test it later: .*sn verify --smoke\r?\n/);
   assert.match(out, /✓\x1b\[0m SUPER-NEMO is installed\.\r?\n {2}Next: open a NEW omp session in a repo and ask it to change some code\.\r?\n {2}Update: {4}.*sn update\r?\n {2}Uninstall: .*sn uninstall/);
 
@@ -80,7 +80,7 @@ test("interactive uninstall asks first; the default answer keeps everything", as
   const installed = snapshot(s.home);
   const kept = await underPty(`${SN} uninstall`, color(s.env), () => "");
   assert.equal(kept.code, 1, kept.out);
-  assert.match(kept.questions[0], /This will[\s\S]*remove 7 agents and 6 skills from OMP[\s\S]*Remove SUPER-NEMO\? \[y\/N\] $/);
+  assert.match(kept.questions[0], /This will[\s\S]*remove 7 agents and 6 skills and 1 extension from OMP[\s\S]*Remove SUPER-NEMO\? \[y\/N\] $/);
   assert.match(kept.out, /Nothing was changed\./);
   assert.deepEqual(snapshot(s.home), installed);
   const removed = await underPty(`${SN} uninstall`, color(s.env), () => "y");

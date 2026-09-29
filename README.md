@@ -12,7 +12,7 @@ You need `omp` 18.3.0+ (signed in with `omp login` for the model providers you u
 curl -fsSL https://raw.githubusercontent.com/Glumac7/super-nemo/main/install.sh | bash
 ```
 
-The installer downloads SUPER-NEMO to `~/.super-nemo/repo`, suggests models for coding, advising, and review, then asks before changing your OMP setup. It backs up files it changes. The optional live test makes additional model calls; you can skip it.
+The installer downloads SUPER-NEMO to `~/.super-nemo/repo`, suggests remote models for coding, advising, and review (not OMP's built-in Ollama, LM Studio, or llama.cpp providers by default), then asks before changing your OMP setup. It keeps model roles and approval settings you already selected; explicit local model flags still work. **A fresh setup defaults to YOLO:** OMP runs commands without asking, including commands that change files. Choose `--approval write` or `--approval always-ask` to retain prompts; do not rely on review or deny rules as a permission boundary. The optional live test makes additional model calls; you can skip it.
 
 ## Use it
 
@@ -36,12 +36,18 @@ You can choose a mode explicitly: `omp "super-nemo light: Fix the typo in the fo
 ## Manage the install
 
 ```sh
-~/.super-nemo/repo/sn status       # Show installation, model choices, and changed settings
-~/.super-nemo/repo/sn verify       # Check the installation
-~/.super-nemo/repo/sn update       # Fetch updates and reapply your choices
-~/.super-nemo/repo/sn uninstall    # Remove SUPER-NEMO; restore settings where safe
+sn status       # Show installation, model choices, and changed settings
+sn verify       # Check the installation
+sn update       # Fetch updates and reapply your choices
+sn uninstall    # Remove SUPER-NEMO; restore settings where safe
 ```
 
-`sn update` requires a clean checkout with an upstream branch. `sn uninstall` asks before removing anything and keeps settings you changed yourself. Use `~/.super-nemo/repo/sn --help` for flags, including `--dry-run` to preview install, update, or uninstall and `--profile` for a non-default OMP profile. If you cloned the repository yourself, use `./sn install` and the corresponding `./sn` commands from that checkout instead.
+Install creates an `~/.local/bin/sn` link to the checkout without changing shell startup files or overwriting an existing command. If `~/.local/bin` is not already on `PATH`, add `export PATH="$HOME/.local/bin:$PATH"` to your shell configuration, or keep using `~/.super-nemo/repo/sn` directly. Uninstall removes only the launcher it created; it leaves `~/.local/bin` in place even if install created that directory. If an install is interrupted after creating the command but before recording its identity, recovery leaves the command and pending state untouched rather than risk deleting an unowned replacement; inspect `~/.local/bin/sn`, move it away if appropriate, then retry.
 
-**Costs and safety:** Reviews and the optional live test make model calls, which can incur API charges. The installer defaults to tool approval on writes, but its command deny rules are *not a sandbox*: a project-level OMP config can replace them. Review commands and permissions before using this on a sensitive project. See the [workflow](skills/super-nemo/SKILL.md) for the full mode rules.
+Launcher cleanup is not a security boundary against another process running as your user: a hostile same-user process can replace its private temporary link between verification and deletion during uninstall. Do not run uninstall alongside untrusted same-user processes.
+
+For an installer-managed official GitHub checkout on `main`, interactive OMP sessions make a best-effort background check at most once every 24 hours and may show a notice when a newer commit is available. There are no checks in headless sessions, forks, manually cloned checkouts, or other branches. The notice uses the Git executable recorded at installation; if Git moves, rerun `~/.super-nemo/repo/sn install` from a clean checkout. The notice never installs anything: preview available commits anytime with `~/.super-nemo/repo/sn update --dry-run`, then install manually with `~/.super-nemo/repo/sn update`. Updates require a clean checkout with an upstream branch.
+
+Running the one-line installer again updates its managed checkout. `~/.super-nemo/repo/sn uninstall` asks before removing anything and keeps settings you changed yourself. Use `~/.super-nemo/repo/sn --help` for flags, including `--dry-run` to preview actions and `--profile` for a non-default OMP profile. If you cloned the repository yourself, run `./sn install` and `./sn update --dry-run` / `./sn update` from that checkout instead; these checkouts do not receive automatic notices.
+
+**Costs and safety:** Reviews and the optional live test make model calls, which can incur API charges. The fresh-install YOLO default removes OMP approval prompts; its command deny rules are *not a sandbox*, and a project-level OMP config can replace them. Review commands and permissions before using this on a sensitive project. See the [workflow](skills/super-nemo/SKILL.md) for the full mode rules.

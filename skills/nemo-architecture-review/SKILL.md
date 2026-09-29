@@ -14,5 +14,6 @@ Check:
 - Duplicated business logic that will drift.
 - Public contracts: API/schema/event changes are intentional and versioned where needed.
 - Long-term maintainability of the chosen shape.
+- For a changed architectural decision, name the realistic alternative already available in this repo and the concrete trade-off (complexity, reliability, cost, or operability); don't demand new layers without a requirement.
 
 Output: verdict `PASS` | `FIX_REQUIRED`, then findings as `severity file:line — problem — evidence — fix`. No finding without evidence. PASS with no findings is valid; don't invent issues or restate the diff.

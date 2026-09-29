@@ -32,6 +32,7 @@ Between two modes, pick the higher. State the mode and a one-line reason. The ch
 Evidence for reviewers (refresh after every change):
 - `git add -N . && git diff $BASE > "$SN/diff.patch"` (intent-to-add so new files show; nothing is committed).
 - Run the repo's deterministic checks yourself (lint, typecheck, tests, build; security tooling in CRITICAL) and write exact commands + results to `$SN/checks.md`.
+- For behavior changes, exercise the changed entry point (including a failure/abuse case in CRITICAL) and record observed output in `checks.md`; a green unit suite or lint alone is not operational proof.
 
 Reviewers are read-only and only get what you give them: give their `context` the absolute paths of those three files. Pass evidence, not your conclusions.
 
