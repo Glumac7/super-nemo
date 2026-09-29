@@ -6,6 +6,7 @@ description: Independent security review of a change - trust boundaries, authn/a
 Review the diff under review (given path, else `git diff <base>..HEAD`) and the code paths it reaches. You did not write it. Read-only; never read or print real secrets.
 
 Check:
+- Changed-symbol blast radius: trace entry points and callers of changed validation or authorization logic; examine why removed security checks existed (including relevant history) before deciding a removal is safe.
 - Trust boundaries: every new input is untrusted and validated where it enters.
 - Authn/authz on every new or changed entry point, including object-level access (IDOR) and privilege escalation.
 - Injection: SQL/NoSQL/shell/template/path, deserialization, SSRF, open redirects.
@@ -18,5 +19,6 @@ Check:
 - Existing security controls are not weakened.
 
 Use provided security-tool output (e.g. `npm audit`, semgrep, gitleaks); if none ran, say so.
+State which trust boundaries and reachable paths were actually inspected; a missing test or unavailable security tool limits confidence, not proof of a vulnerability.
 
 Output: verdict `PASS` | `FIX_REQUIRED`, then per finding: `severity` (critical/high/medium/low), `location` (file:line), `evidence`, `attack/failure scenario`, `remediation`, `confidence` (0-1). Don't invent vulnerabilities to produce findings; mark unverified concerns as such.

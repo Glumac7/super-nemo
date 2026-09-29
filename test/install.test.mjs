@@ -4,7 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { test } from "node:test";
 import YAML from "yaml";
-import { INSTALL, INTERNAL, REPO, seedUserContent, sandbox, snapshot, withoutKeyRefs } from "./helpers.mjs";
+import { INSTALL, INTERNAL, MODELS, REPO, seedUserContent, sandbox, snapshot, withoutKeyRefs } from "./helpers.mjs";
 
 const OURS = JSON.parse(fs.readFileSync(path.join(REPO, "config", "deny-patterns.json"), "utf8"));
 const DENY = OURS.filter((e) => e.approval === "deny");
@@ -16,9 +16,11 @@ test("fresh install then uninstall leaves agent dir and home as they were", (t) 
   const res = s.sn(INSTALL);
   assert.equal(res.code, 0, res.out);
   assert.equal(fs.readlinkSync(path.join(s.agentDir, "skills", "super-nemo")), path.join(REPO, "skills", "super-nemo"));
+  assert.equal(fs.readlinkSync(path.join(s.agentDir, "extensions", "super-nemo.js")), path.join(REPO, "extensions", "super-nemo.js"));
+  assert.ok(s.manifest().symlinks.includes(path.join(s.agentDir, "extensions", "super-nemo.js")));
   assert.equal(fs.readlinkSync(path.join(s.snHome, "current")), REPO);
   const config = YAML.parse(s.read("config.yml"));
-  assert.equal(config.tools.approvalMode, "write");
+  assert.equal(config.tools.approvalMode, "yolo");
   assert.equal(config.tools.approval.eval, "prompt");
   assert.equal(config.task.isolation.enabled, true);
   assert.equal(config.advisor.syncBacklog, "3");
@@ -94,7 +96,7 @@ test("dry-run install and dry-run uninstall write nothing", (t) => {
   const before = snapshot(s.home);
   const dry = s.sn([...INSTALL, "--dry-run", "--verbose"]);
   assert.equal(dry.code, 0, dry.out);
-  assert.match(dry.out, /set tools\.approvalMode: \(absent\) -> "write"/);
+  assert.match(dry.out, /set tools\.approvalMode: \(absent\) -> "yolo"/);
   assert.deepEqual(snapshot(s.home), before);
 
   assert.equal(s.sn(INSTALL).code, 0);
@@ -116,7 +118,7 @@ test("default output is a short plain summary; --verbose adds every file and key
   assert.ok(!dry.out.includes(s.home), dry.out);
   assert.match(dry.out, /Main model +sol - medium +writes the code/);
   assert.match(dry.out, /Reviewers +big - high +different provider = better reviews/);
-  assert.match(dry.out, /- add 7 agents and 6 skills to OMP \(linked to /);
+  assert.match(dry.out, /- add 7 agents and 6 skills and 1 extension to OMP \(linked to /);
   assert.match(dry.out, /- update ~\/\.omp\/agent\/config\.yml: model roles, 23 blocked commands, 5 allowed git commands, task settings, tool approval\n/);
   assert.match(dry.out, /- add the SUPER-NEMO block to ~\/\.omp\/agent\/AGENTS\.md\n/);
   assert.match(dry.out, /- add advisor guidance \(WATCHDOG\.md \/ WATCHDOG\.yml\)\n/);
@@ -125,6 +127,7 @@ test("default output is a short plain summary; --verbose adds every file and key
   const verbose = s.sn([...INSTALL, "--dry-run", "--verbose"]);
   assert.match(verbose.out, /set modelRoles\.nemo-review: \(absent\) -> "alpha\/big:high"/);
   assert.match(verbose.out, new RegExp(`link ${s.agentDir}/skills/super-nemo -> `));
+  assert.match(verbose.out, new RegExp(`link ${s.agentDir}/extensions/super-nemo.js -> `));
   assert.match(verbose.out, /set task\.agentModelOverrides\.task: \(absent\) -> "@default"/);
   assert.doesNotMatch(verbose.out, /Add --verbose/);
 
@@ -132,7 +135,7 @@ test("default output is a short plain summary; --verbose adds every file and key
   assert.equal(res.code, 0, res.out);
   assert.doesNotMatch(res.out, internal);
   assert.ok(!res.out.includes(s.home), res.out);
-  assert.match(res.out, /\nOK Linked agents and skills\nOK Updated OMP config\nOK Updated AGENTS\.md\nOK Added advisor guidance\nOK Checked installation\n/);
+  assert.match(res.out, /\nOK Linked agents, skills and extensions\nOK Updated OMP config\nOK Updated AGENTS\.md\nOK Added advisor guidance\nOK Checked installation\n/);
   assert.match(res.out, /\nOK SUPER-NEMO is installed\.\n {2}Next: open a NEW omp session in a repo and ask it to change some code\.\n/);
   for (const cmd of [["status"], ["verify"], ["uninstall"]]) {
     const out = s.sn(cmd).out;
@@ -145,12 +148,15 @@ test("an existing regular file at a target aborts before any write", (t) => {
   const s = sandbox(t);
   fs.mkdirSync(path.join(s.agentDir, "agents"));
   fs.writeFileSync(path.join(s.agentDir, "agents", "nemo-qa.md"), "my own agent\n");
+  fs.mkdirSync(path.join(s.agentDir, "extensions"));
+  fs.writeFileSync(path.join(s.agentDir, "extensions", "super-nemo.js"), "my own extension\n");
   fs.mkdirSync(path.join(s.agentDir, "skills", "super-nemo"), { recursive: true });
   const before = snapshot(s.home);
   const res = s.sn(INSTALL);
   assert.equal(res.code, 1);
   assert.match(res.out, /nemo-qa\.md already exists/);
   assert.match(res.out, /skills\/super-nemo already exists/);
+  assert.match(res.out, /extensions\/super-nemo\.js already exists/);
   assert.deepEqual(snapshot(s.home), before);
 });
 
@@ -208,7 +214,7 @@ test("advisor off turns the implementers' advisor off and writes no advisor role
   assert.deepEqual(JSON.parse(omp.stdout).value, { "nemo-implementer": "off", "nemo-implementer-critical": "off" });
 });
 
-test("defaults: strongest model high, cross-provider review, advisor from implementation model", (t) => {
+test("defaults: strongest remote model high, cross-provider review, advisor from implementation model", (t) => {
   const s = sandbox(t);
   assert.equal(s.sn(INSTALL).code, 0);
   const roles = YAML.parse(s.read("config.yml")).modelRoles;
@@ -218,6 +224,70 @@ test("defaults: strongest model high, cross-provider review, advisor from implem
     advisor: "alpha/big:medium",
     "advisor-critical": "alpha/big:high",
   });
+});
+
+test("mixed OMP inventory selects remote roles and YOLO; explicit local roles remain usable", (t) => {
+  const s = sandbox(t);
+  const raw = JSON.parse(fs.readFileSync(MODELS, "utf8")).models;
+  const local = [
+    { ...raw[0], provider: "ollama", selector: "ollama/giant", cost: { output: 999 } },
+    { ...raw[1], provider: "lm-studio", selector: "lm-studio/small", cost: { output: 0 } },
+    { ...raw[0], provider: "llama.cpp", selector: "llama.cpp/giant", cost: { output: 999 } },
+  ];
+  const inventory = path.join(s.home, "models.json");
+  fs.writeFileSync(inventory, JSON.stringify({ models: [...local, ...raw] }));
+  const env = { SN_MODELS_JSON: inventory };
+  const res = s.sn(INSTALL, env);
+  assert.equal(res.code, 0, res.out);
+  let config = YAML.parse(s.read("config.yml"));
+  assert.equal(config.tools.approvalMode, "yolo");
+  assert.deepEqual(config.modelRoles, {
+    default: "alpha/big:high", "nemo-review": "beta/sol:high",
+    advisor: "alpha/big:medium", "advisor-critical": "alpha/big:high",
+  });
+  const explicit = s.sn([...INSTALL, "--impl", "ollama/giant", "--fast", "lm-studio/small",
+    "--advisor", "ollama/giant", "--advisor-critical", "llama.cpp/giant",
+    "--review", "lm-studio/small", "--approval", "write"], env);
+  assert.equal(explicit.code, 0, explicit.out);
+  config = YAML.parse(s.read("config.yml"));
+  assert.equal(config.tools.approvalMode, "write");
+  assert.deepEqual(config.modelRoles, {
+    default: "ollama/giant:high", "nemo-fast": "lm-studio/small:low",
+    advisor: "ollama/giant:medium", "advisor-critical": "llama.cpp/giant:high",
+    "nemo-review": "lm-studio/small:high",
+  });
+  const again = s.sn(INSTALL, env);
+  assert.equal(again.code, 0, again.out);
+  assert.equal(again.out.includes("Nothing to change"), true, again.out);
+  assert.equal(YAML.parse(s.read("config.yml")).tools.approvalMode, "write");
+  assert.equal(YAML.parse(s.read("config.yml")).modelRoles.default, "ollama/giant:high");
+});
+
+test("local-only inventory fails without a remote provider or explicit --impl, without writing", (t) => {
+  const s = sandbox(t);
+  const local = JSON.parse(fs.readFileSync(MODELS, "utf8")).models[0];
+  const inventory = path.join(s.home, "local-models.json");
+  fs.writeFileSync(inventory, JSON.stringify({ models: [{ ...local, provider: "ollama", selector: "ollama/only" }] }));
+  const env = { SN_MODELS_JSON: inventory };
+  const before = snapshot(s.home);
+  const res = s.sn(INSTALL, env);
+  assert.equal(res.code, 2, res.out);
+  assert.match(res.out, /Only local models.*remote provider.*--impl/);
+  assert.deepEqual(snapshot(s.home), before);
+  const selected = s.sn([...INSTALL, "--impl", "ollama/only"], env);
+  assert.equal(selected.code, 0, selected.out);
+  assert.equal(YAML.parse(s.read("config.yml")).modelRoles.default, "ollama/only:high");
+});
+
+test("first install retains pre-existing approval settings instead of enabling YOLO", (t) => {
+  for (const mode of ["always-ask", "write"]) {
+    const s = sandbox(t);
+    s.write("config.yml", `tools:\n  approvalMode: ${mode}\n`);
+    const res = s.sn(INSTALL);
+    assert.equal(res.code, 0, res.out);
+    assert.equal(YAML.parse(s.read("config.yml")).tools.approvalMode, mode);
+    assert.equal(s.manifest().choices.approval, mode);
+  }
 });
 
 test("verify passes after install and each skill resolves to the installed copy", (t) => {
@@ -233,6 +303,12 @@ test("verify passes after install and each skill resolves to the installed copy"
   assert.equal(broken.code, 1);
   assert.match(broken.out, /^x .*skills\/nemo-qa-review is not a symlink/m);
   assert.match(broken.out, /omp read skill:\/\/nemo-qa-review failed/);
+
+  assert.equal(s.sn(INSTALL).code, 0);
+  fs.unlinkSync(path.join(s.agentDir, "extensions", "super-nemo.js"));
+  const extension = s.sn(["verify"]);
+  assert.equal(extension.code, 1);
+  assert.match(extension.out, /^x .*extensions\/super-nemo\.js is not a symlink/m);
 });
 
 test("verify fails when a user rule is moved in front of our deny rules", (t) => {
@@ -285,12 +361,12 @@ test("verify names an unavailable chosen model and an overridden setting in plai
   const real = spawnSync("bash", ["-c", "command -v omp"], { encoding: "utf8" }).stdout.trim();
   fs.writeFileSync(path.join(bin, "omp"), [
     "#!/bin/bash",
-    "if [ \"$1 $2 $3\" = \"config get tools.approvalMode\" ]; then echo '{\"value\":\"yolo\"}'; exit 0; fi",
+    "if [ \"$1 $2 $3\" = \"config get tools.approvalMode\" ]; then echo '{\"value\":\"write\"}'; exit 0; fi",
     `exec ${JSON.stringify(real)} "$@"`,
   ].join("\n"), { mode: 0o755 });
   const shadowed = s.sn(["verify"], { PATH: `${bin}:${process.env.PATH}` });
   assert.equal(shadowed.code, 0, shadowed.out);
-  assert.match(shadowed.out, /^! Auto-approve: OMP uses on instead of off; a project config or environment setting overrides it \(config\.yml: tools\.approvalMode\)$/m);
+  assert.match(shadowed.out, /^! Auto-approve: OMP uses off instead of on; a project config or environment setting overrides it \(config\.yml: tools\.approvalMode\)$/m);
   assert.doesNotMatch(withoutKeyRefs(shadowed.out), INTERNAL);
 });
 
@@ -317,7 +393,7 @@ test("an existing config.yaml is edited in place and never shadowed by a new con
   const original = s.read("config.yaml");
   assert.equal(s.sn(INSTALL).code, 0);
   assert.ok(!fs.existsSync(s.file("config.yml")));
-  assert.equal(YAML.parse(s.read("config.yaml")).tools.approvalMode, "write");
+  assert.equal(YAML.parse(s.read("config.yaml")).tools.approvalMode, "yolo");
   assert.equal(s.sn(["uninstall"]).code, 0);
   assert.equal(s.read("config.yaml"), original);
 });

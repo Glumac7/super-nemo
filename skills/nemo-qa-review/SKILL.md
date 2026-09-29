@@ -10,5 +10,6 @@ You did not implement this change. Verify it; don't trust claims. Think adversar
 3. Map each criterion to evidence (test, command output, reproduction): `met` | `not met` | `unverified`.
 4. Probe what the tests miss: happy path, edge cases, invalid input, failure handling, state transitions, concurrency, idempotency/retries.
 5. Check regression risk in adjacent behavior and name missing tests.
+For changed behavior, exercise the actual entry point and observe its result; passing unit tests or lint do not establish that an installation, CLI, API, or UI flow works.
 
-Output: verdict `PASS` | `FIX_REQUIRED`, a criteria table with evidence, failed/skipped checks verbatim, and defects as `file:line — repro — expected vs actual`.
+Output: verdict `PASS` | `FIX_REQUIRED`, a criteria table with evidence, failed/skipped checks verbatim, and defects as `file:line — repro — expected vs actual`. Mark a criterion `unverified` rather than infer it from a different check.
