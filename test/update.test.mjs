@@ -5,7 +5,7 @@ import { test } from "node:test";
 import YAML from "yaml";
 import { ANONYMOUS, GH_HINT, GITHUB_URL, PRIVATE_HINT, VIA_GH, githubStyle, remote, sandbox, snapshot } from "./helpers.mjs";
 
-const ANSWERS = ["--yes", "--no-smoke", "--approval", "always-ask", "--advisor", "off", "--fast", "alpha/small"];
+const ANSWERS = ["--yes", "--no-smoke", "--name", "jake", "--approval", "always-ask", "--advisor", "off", "--fast", "alpha/small"];
 
 async function installed(t) {
   const s = sandbox(t);
@@ -38,7 +38,8 @@ test("update fast-forwards, re-applies the recorded answers and reports the chan
   assert.equal(config.tools.approvalMode, "always-ask");
   assert.equal(config.modelRoles["nemo-fast"], "alpha/small:low");
   assert.deepEqual(config.task.agentAdvisor, { "nemo-implementer": "off", "nemo-implementer-critical": "off" });
-  assert.deepEqual(s.manifest().choices, { impl: "alpha/big:high", fast: "alpha/small:low", advisor: null, advisorCritical: null, review: "beta/sol:high", approval: "always-ask" });
+  assert.match(s.read("AGENTS.md"), /called SUPER-JAKE/);
+  assert.deepEqual(s.manifest().choices, { name: "jake", impl: "alpha/big:high", fast: "alpha/small:low", advisor: null, advisorCritical: null, review: "beta/sol:high", approval: "always-ask" });
 });
 
 test("update when already current says so and writes nothing", async (t) => {
