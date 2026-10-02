@@ -443,3 +443,46 @@ test("both config.yml and config.yaml present aborts", (t) => {
   assert.match(res.out, /both .*config\.yml and .*config\.yaml exist/);
   assert.deepEqual(snapshot(s.home), before);
 });
+
+test("--name renames it in AGENTS.md and status, survives --reuse, can go back to nemo, and uninstall restores everything", (t) => {
+  const s = sandbox(t);
+  const before = snapshot(s.home);
+  const res = s.sn([...INSTALL, "--name", "Jake"]);
+  assert.equal(res.code, 0, res.out);
+  assert.match(res.out, /SUPER-JAKE is installed\./);
+  assert.equal(s.manifest().choices.name, "jake");
+  const agents = s.read("AGENTS.md");
+  assert.match(agents, /^<!-- super-nemo:begin -->\n@~\/\.super-nemo\/current\/blocks\/AGENTS\.md\n\nHere SUPER-NEMO is called SUPER-JAKE; /);
+  assert.match(agents, /`super-jake critical:` mean the same as the matching `super-nemo` prefixes/);
+  assert.match(s.sn(["status"]).out, /Name +SUPER-JAKE +start a message with super-jake: to call it/);
+  assert.equal(s.sn(["verify"]).code, 0);
+
+  const reuse = s.sn(["install", "--reuse", "--no-smoke"]);
+  assert.equal(reuse.code, 0, reuse.out);
+  assert.match(reuse.out, /Nothing to change/);
+  assert.match(reuse.out, /SUPER-JAKE is installed\./);
+  assert.equal(s.read("AGENTS.md"), agents);
+
+  const keep = s.sn(INSTALL);
+  assert.equal(keep.code, 0, keep.out);
+  assert.equal(s.manifest().choices.name, "jake");
+
+  const back = s.sn([...INSTALL, "--name", "nemo"]);
+  assert.equal(back.code, 0, back.out);
+  assert.equal(s.read("AGENTS.md"), "<!-- super-nemo:begin -->\n@~/.super-nemo/current/blocks/AGENTS.md\n<!-- super-nemo:end -->\n");
+  assert.match(back.out, /SUPER-NEMO is installed\./);
+
+  assert.equal(s.sn([...INSTALL, "--name", "jake"]).code, 0);
+  const removed = s.sn(["uninstall"]);
+  assert.equal(removed.code, 0, removed.out);
+  assert.deepEqual(snapshot(s.home), before);
+});
+
+test("an invalid --name is refused before anything is written", (t) => {
+  const s = sandbox(t);
+  const before = snapshot(s.home);
+  const res = s.sn([...INSTALL, "--name", "jake doe"]);
+  assert.equal(res.code, 2, res.out);
+  assert.match(res.out, /--name must be a word of lowercase letters/);
+  assert.deepEqual(snapshot(s.home), before);
+});

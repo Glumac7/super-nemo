@@ -255,7 +255,7 @@ export function underPty(command, env, answer) {
   const onData = (d) => {
     out += d;
     for (;;) {
-      const m = /Choice \[\d+\]: |\[[yY]\/[nN](?:\/c(?:=change)?)?\] /.exec(out.slice(cursor));
+      const m = /Choice \[\d+\]: |\[[yY]\/[nN](?:\/c(?:=change)?)?\] |super-<name> \[[a-z0-9-]+\]: /.exec(out.slice(cursor));
       if (!m) break;
       const question = out.slice(cursor, cursor + m.index + m[0].length);
       cursor += m.index + m[0].length;
