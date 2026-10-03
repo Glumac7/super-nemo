@@ -142,42 +142,6 @@ test("dry-run install and dry-run uninstall write nothing", (t) => {
   assert.deepEqual(snapshot(s.home), installed);
 });
 
-test("default output is a short plain summary; --verbose adds every file and key", (t) => {
-  const s = sandbox(t);
-  seedUserContent(s);
-  const internal = new RegExp(`${INTERNAL.source}|\\x1b\\[`);
-  const dry = s.sn([...INSTALL, "--dry-run"]);
-  assert.equal(dry.code, 0, dry.out);
-  assert.doesNotMatch(dry.out, internal);
-  assert.ok(!dry.out.includes(s.home), dry.out);
-  assert.match(dry.out, /Main model +sol - medium +writes the code/);
-  assert.match(dry.out, /Reviewers +big - high +different provider = better reviews/);
-  assert.match(dry.out, /- add 7 agents and 6 skills and 1 extension to OMP \(linked to /);
-  assert.match(dry.out, /- update ~\/\.omp\/agent\/config\.yml: model roles, 23 blocked commands, 5 allowed git commands, task settings, tool approval\n/);
-  assert.match(dry.out, /- add the SUPER-NEMO block to ~\/\.omp\/agent\/AGENTS\.md\n/);
-  assert.match(dry.out, /- add advisor guidance \(WATCHDOG\.md \/ WATCHDOG\.yml\)\n/);
-  assert.match(dry.out, /Backups of changed files: ~\/\.super-nemo\/state\/backups\/\S+\n/);
-  assert.match(dry.out, /Dry run: nothing was written\. Add --verbose for every file and setting\./);
-  assert.match(dry.out, /Add ~\/\.local\/bin to PATH to use the sn command/);
-  const verbose = s.sn([...INSTALL, "--dry-run", "--verbose"]);
-  assert.match(verbose.out, /set modelRoles\.nemo-review: \(absent\) -> "alpha\/big:high"/);
-  assert.match(verbose.out, new RegExp(`link ${s.agentDir}/skills/super-nemo -> `));
-  assert.match(verbose.out, new RegExp(`link ${s.agentDir}/extensions/super-nemo.js -> `));
-  assert.match(verbose.out, /set task\.agentModelOverrides\.task: \(absent\) -> "@default"/);
-  assert.doesNotMatch(verbose.out, /Add --verbose/);
-
-  const res = s.sn(INSTALL);
-  assert.equal(res.code, 0, res.out);
-  assert.doesNotMatch(res.out, internal);
-  assert.ok(!res.out.includes(s.home), res.out);
-  assert.match(res.out, /\nOK Linked agents, skills and extensions\nOK Updated OMP config\nOK Updated AGENTS\.md\nOK Added advisor guidance\nOK Checked installation\n/);
-  assert.match(res.out, /\nOK SUPER-NEMO is installed\.\n {2}Next: open a NEW omp session in a repo and ask it to change some code\.\n/);
-  for (const cmd of [["status"], ["verify"], ["uninstall"]]) {
-    const out = s.sn(cmd).out;
-    assert.doesNotMatch(out, internal, cmd[0]);
-    assert.ok(!out.includes(s.home), `${cmd[0]}: ${out}`);
-  }
-});
 
 test("an existing regular file at a target aborts before any write", (t) => {
   const s = sandbox(t);

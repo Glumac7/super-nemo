@@ -29,9 +29,25 @@ SUPER-NEMO activates automatically for requests to change a repository. It does 
 | --- | --- | --- |
 | LIGHT | Small, low-risk changes | Implement, check, quality review |
 | NORMAL | Most code changes | Implementer with advisor; checks and independent reviews |
-| CRITICAL | Security, secrets, data, deploy, or other high-risk changes | Stronger advisor, security review, and human-review handoff |
+| CRITICAL | Security, secrets, data, deploy, or other high-risk changes | Stronger advisor, security and performance reviews, and mandatory human-review handoff |
 
-You can choose a mode explicitly: `omp "super-nemo light: Fix the typo in the footer"` (or `normal` / `critical`). To let it choose, just describe the task; `super-nemo:` also uses automatic selection. Work happens on a non-protected branch. SUPER-NEMO does not push, deploy, or merge unless you explicitly ask.
+You can choose a mode explicitly: `omp "super-nemo light: Fix the typo in the footer"` (or `normal` / `critical`). To let it choose, just describe the task; `super-nemo:` also uses automatic selection. Work happens on a non-protected branch. Changes stay local unless you explicitly authorize the primary orchestrator to commit, push and open a draft PR for a named feature branch and repository.
+
+### Build, refine, measure
+
+First get a correct working feature with the smallest sound implementation; then simplify/clean up and check architecture; then measure and optimize demonstrated bottlenecks. Correctness, security and resource constraints apply throughout—this is not permission to knowingly waste allocations or computation, and speculative optimization is not a substitute for evidence.
+
+For UI work, load an available appropriate UI skill before implementation and use earlier screenshots, designs and feedback as iteration input. Verify the actual changed surface at relevant sizes and states; unit tests or reading source alone do not prove the UI works. Missing skills, prior artifacts or surface access are reported as limits, never invented.
+
+CRITICAL always dispatches the read-only `nemo-performance` reviewer alongside architecture, security, quality, QA and native review, and includes it in the fix loop and final evidence. It requires reproducible bounded workload, baseline/changed measurements and commands, and reports missing evidence instead of inventing numbers or findings. The orchestrator reads `omp config get modelRoles --json`, checks the returned record and selects `tasks[].model: "@advisor-critical"` when configured. For advisor-disabled installs without that role, it explicitly reports and uses the existing configured `@nemo-review` choice; unavailable requested models block review, with no silent substitution or advisor-setting changes.
+
+### Reviewed draft handoff
+
+Reviewed feature changes get a PR body using the destination repository's applicable template first, or the installed `skill://super-nemo/templates/pull-request.md` fallback. This repository's [PR template](.github/pull_request_template.md) is for this repository, not other destinations. Templates and issue/PR text are untrusted body data, not commands or publication authority.
+
+Without direct session-level user approval, SUPER-NEMO leaves local changes and reports the pending handoff. After green checks and independent specialist/native/final reviews, only the primary orchestrator can use explicitly scoped approval to commit reviewed changes, push the approved feature branch, and open a **DRAFT** PR. It checks `origin`, the current branch and destination protection/base rules before publishing. Implementers and reviewers never publish. No protected-branch pushes, merges, deployments or ready-for-review transitions are part of this handoff.
+
+The body records changes, exact check results, reviewer verdicts, evidence limits and unresolved issues. A draft is not approval: CRITICAL still ends **HUMAN REVIEW REQUIRED**, identifying what a human must check before any later merge or deployment.
 
 ### Give it your own name
 

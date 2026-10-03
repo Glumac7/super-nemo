@@ -15,6 +15,42 @@ case "$mode" in
   *) echo "$usage" >&2; exit 2 ;;
 esac
 
+# CRITICAL expectations come from the parent role record, not a nested config key.
+# Only an absent critical role permits the explicit advisor-disabled reviewer fallback.
+expected_model=""
+if [[ "$mode" == critical ]]; then
+  roles="$(omp config get modelRoles --json)"
+  selected="$(printf '%s' "$roles" | node -e '
+    let text = "";
+    process.stdin.setEncoding("utf8");
+    process.stdin.on("data", (chunk) => { text += chunk; });
+    process.stdin.on("end", () => {
+      try {
+        const result = JSON.parse(text);
+        if (!result || result.key !== "modelRoles") throw new Error("expected the modelRoles config result");
+        const roles = result.value;
+        if (!roles || typeof roles !== "object" || Array.isArray(roles)) throw new Error("modelRoles value must be a record");
+        if (!Object.hasOwn(roles, "advisor-critical") && Object.hasOwn(roles, "advisor")) {
+          throw new Error("advisor-critical is required when an advisor role is configured");
+        }
+        const role = Object.hasOwn(roles, "advisor-critical") ? "advisor-critical" : "nemo-review";
+        const selector = roles[role];
+        if (typeof selector !== "string" || !/^[A-Za-z0-9._@+/-][A-Za-z0-9._@+/:-]*$/.test(selector)) {
+          throw new Error(`modelRoles.${role} must be a configured non-empty model selector`);
+        }
+        console.log(`@${role}`);
+      } catch (err) {
+        console.error(`critical smoke model selection failed: ${err.message}`);
+        process.exitCode = 1;
+      }
+    });
+  ')"
+  if [[ "$selected" == @nemo-review ]]; then
+    printf '%s\n' 'critical smoke: advisor-critical absent; explicit advisor-disabled fallback to @nemo-review'
+  fi
+  expected_model="$selected"
+fi
+
 repo="$(mktemp -d /tmp/super-nemo-smoke.XXXXXX)"
 sessions="$(mktemp -d /tmp/super-nemo-sessions.XXXXXX)"
 trap 'rm -rf "$repo" "$sessions"' EXIT
@@ -48,4 +84,8 @@ printf '\n--- resulting diff ---\n'
 git -c core.pager=cat diff
 git status --short
 
-node "$here/assert-run.mjs" "$mode" "$sessions" "$repo"
+if [[ "$mode" == critical ]]; then
+  node "$here/assert-run.mjs" "$mode" "$sessions" "$repo" "$expected_model"
+else
+  node "$here/assert-run.mjs" "$mode" "$sessions" "$repo"
+fi
