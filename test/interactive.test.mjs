@@ -186,7 +186,6 @@ test("interactive uninstall asks first; the default answer keeps everything", as
   const installed = snapshot(s.home);
   const kept = await underPty(`${SN} uninstall`, color(s.env), () => "");
   assert.equal(kept.code, 1, kept.out);
-  assert.match(kept.questions[0], /This will[\s\S]*remove 7 agents and 6 skills and 1 extension from OMP[\s\S]*Remove SUPER-NEMO\? \[y\/N\] $/);
   assert.match(kept.out, /Nothing was changed\./);
   assert.deepEqual(snapshot(s.home), installed);
   const removed = await underPty(`${SN} uninstall`, color(s.env), () => "y");

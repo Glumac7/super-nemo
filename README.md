@@ -7,7 +7,7 @@ SUPER-NEMO is a risk-routed coding workflow for [Oh My Pi](https://github.com/ca
 | Path | Purpose |
 | --- | --- |
 | [`skills/super-nemo/SKILL.md`](skills/super-nemo/SKILL.md) | Routing rules, exact steps for each mode, and review gates |
-| [`agents/`](agents/) | Implementer and independent reviewer roles used by OMP |
+| [`agents/`](agents/) | Production implementer, dedicated test author, and independent reviewer roles used by OMP |
 | [`extensions/`](extensions/) | OMP integration for the workflow |
 | [`standards/`](standards/) | Engineering baseline applied during work |
 | [`sn`](sn), [`lib/`](lib/), [`install.sh`](install.sh) | Installer and commands to manage or verify the OMP setup |
@@ -41,10 +41,18 @@ SUPER-NEMO activates automatically for requests to change a repository. It does 
 | Mode | When | Review path |
 | --- | --- | --- |
 | LIGHT | Tiny, isolated, low-risk fixes | Implement directly, run checks, get one independent quality review |
-| NORMAL | Most features, bugs, and meaningful refactors | Implementer with advisor, checks, independent architecture/quality/QA reviews and a code review, then final review |
-| CRITICAL | Auth, security, secrets, data, infrastructure, deploy, or other high-risk work | Stronger advisor, security review, failure/abuse checks, and a human-review handoff |
+| NORMAL | Most features, bugs, and meaningful refactors | Production implementer with advisor, dedicated tester, checks, independent architecture/quality/QA reviews and a code review, then final review |
+| CRITICAL | Auth, security, secrets, data, infrastructure, deploy, or other high-risk work | Production implementer with stronger advisor, dedicated tester covering failure/abuse paths, security review, and a human-review handoff |
 
-Each diagram starts **after** you have asked OMP to change code. Checks mean the relevant repository checks; a failing check or material review finding returns to the implementer for a fix and re-check. See the [full workflow](skills/super-nemo/SKILL.md) for routing and review criteria.
+NORMAL and CRITICAL separate authorship: `nemo-implementer` / `nemo-implementer-critical` change production code and its documentation; `nemo-tester` writes behavioral tests and necessary fixtures **after source integration, in a dedicated disposable repository target containing the exact same effective source snapshot**. It receives the absolute target root, source revision/snapshot and an explicit test/fixture allowlist, not the production working tree as an edit target. Dispatch uses `isolated: false` so runtime isolation cannot auto-apply its changes. The tester uses the default coding model, adds no advisor configuration, and never fixes production code or approves work. `nemo-qa` independently verifies acceptance criteria read-only. LIGHT explicitly keeps direct implementation and any necessary tests with the orchestrator, without a dedicated tester.
+
+Before dispatch, the orchestrator retains the pre-tester Git revision, complete integrated-source snapshot's cryptographic digest and approved test/fixture path set in its **trusted session state**. Snapshots/diffs saved under `$SN` are mutable evidence/storage, not trust anchors. Immediately before acceptance and **before any** integration/auto-application, it recomputes the snapshot digest against that session-held anchor and independently generates/audits the full candidate diff, including new files. Agent-supplied digests or summaries are not authority. Modified baselines, out-of-scope production/config/agent/permission edits and auto-applied output are rejected; only independently validated test/fixture changes are applied. It records target/source/test evidence for reviewers, then runs checks after integration. Disposable targets contain only repository material, not copies of home directories, user configuration or secrets.
+
+This authorship gate is a workflow responsibility, **not an OS sandbox**. The tester and its tools are trusted same-user execution: prompts and disposable workspaces do not prevent secret reads, network access or destructive side effects. Such actions remain prohibited by instructions rather than technically confined; this inherited runtime risk requires human review for CRITICAL work.
+
+If the runtime cannot preserve trusted session state or prevent auto-application, the split is **advisory only**: human review of the full diff is required before accepting tester work, and no enforced isolation is claimed.
+
+Each diagram starts **after** you have asked OMP to change code. The orchestrator runs relevant repository checks after source and tests are integrated. Red checks and material findings go to the responsible owner: production defects to the implementer, test/fixture defects or missing coverage to the tester, with specific evidence. Tests must not be weakened to fit a production defect. Source fixes are integrated before the tester updates coverage; affected checks and failed review gates then run again. See the [full workflow](skills/super-nemo/SKILL.md) for routing and review criteria.
 
 ### LIGHT
 
@@ -65,13 +73,21 @@ flowchart TD
 
 ```mermaid
 flowchart TD
-    A["Most code changes"] --> B["Implementer + advisor"]
-    B --> C["Run relevant checks"]
-    C -- Failing --> B
-    C -- Green --> D["Architecture + quality + QA + code reviews"]
+    A["Most code changes"] --> B["Production implementer + advisor"]
+    B --> T["Integrate source; tester writes tests and fixtures"]
+    T --> C["Integrate tests; run relevant checks"]
+    C -- Failing --> O{"Production or test defect?"}
+    O -- Production --> B
+    O -- Tests --> T
+    C -- Green --> D["Architecture + quality + read-only QA + code reviews"]
     D --> E{"Material finding?"}
-    E -- Yes --> F["Implementer fixes; re-check affected paths"]
-    F --> J["Re-run failed reviews only"]
+    E -- Yes --> F{"Responsible owner fixes"}
+    F -- Production --> P["Implementer fixes; integrate source; tester updates coverage"]
+    F -- Tests --> Q["Tester fixes tests or fixtures"]
+    P --> R["Integrate tests; re-check affected paths"]
+    Q --> R
+    R -- Failing --> F
+    R -- Green --> J["Re-run failed reviews only"]
     J --> E
     E -- No --> G["Independent final review"]
     G --> H["Report result"]
@@ -82,13 +98,21 @@ flowchart TD
 ```mermaid
 flowchart TD
     A["High-risk change"] --> B["Requirements + threat sketch"]
-    B --> C["Critical implementer + stronger advisor"]
-    C --> D["Checks including security and failure/abuse paths"]
-    D -- Failing --> C
-    D -- Green --> E["Architecture + security + quality + QA + code reviews"]
+    B --> C["Production implementer + stronger advisor"]
+    C --> T["Integrate source; tester covers behavior, failures and abuse"]
+    T --> D["Integrate tests; checks including security"]
+    D -- Failing --> O{"Production or test defect?"}
+    O -- Production --> C
+    O -- Tests --> T
+    D -- Green --> E["Architecture + security + quality + read-only QA + code reviews"]
     E --> F{"Material finding?"}
-    F -- Yes --> G["Implementer fixes; re-check affected paths"]
-    G --> J["Re-run failed reviews only"]
+    F -- Yes --> G{"Responsible owner fixes"}
+    G -- Production --> P["Implementer fixes; integrate source; tester updates coverage"]
+    G -- Tests --> Q["Tester fixes tests or fixtures"]
+    P --> R["Integrate tests; re-check affected paths"]
+    Q --> R
+    R -- Failing --> G
+    R -- Green --> J["Re-run failed reviews only"]
     J --> F
     F -- No --> H["Independent final review"]
     H --> I["Human review required; no automatic merge"]
