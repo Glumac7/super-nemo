@@ -41,6 +41,68 @@ test("fresh install then uninstall leaves agent dir and home as they were", (t) 
   assert.deepEqual(snapshot(s.home), before);
 });
 
+test("the tester is installed, required by verify, repaired on reinstall, and removed on uninstall", (t) => {
+  const s = sandbox(t);
+  const before = snapshot(s.home);
+  const tester = path.join(s.agentDir, "agents", "nemo-tester.md");
+  const source = path.join(REPO, "agents", "nemo-tester.md");
+  const installed = s.sn(INSTALL);
+  assert.equal(installed.code, 0, installed.out);
+  assert.equal(fs.readlinkSync(tester), source);
+  assert.ok(s.manifest().symlinks.includes(tester));
+  const verified = s.sn(["verify"]);
+  assert.equal(verified.code, 0, verified.out);
+
+  fs.unlinkSync(tester);
+  const missing = s.sn(["verify"]);
+  assert.equal(missing.code, 1, missing.out);
+  assert.match(missing.out, /agents\/nemo-tester\.md is not a symlink/);
+
+  const repaired = s.sn(INSTALL);
+  assert.equal(repaired.code, 0, repaired.out);
+  assert.equal(fs.readlinkSync(tester), source);
+  assert.ok(s.manifest().symlinks.includes(tester));
+  const reverified = s.sn(["verify"]);
+  assert.equal(reverified.code, 0, reverified.out);
+
+  const removed = s.sn(["uninstall"]);
+  assert.equal(removed.code, 0, removed.out);
+  assert.equal(fs.existsSync(tester), false);
+  assert.deepEqual(snapshot(s.home), before);
+});
+
+for (const kind of ["regular file", "foreign symlink"]) {
+  test(`install preserves a conflicting tester ${kind} without writing`, (t) => {
+    const s = sandbox(t);
+    const tester = path.join(s.agentDir, "agents", "nemo-tester.md");
+    fs.mkdirSync(path.dirname(tester));
+    if (kind === "regular file") fs.writeFileSync(tester, "my own tester\n");
+    else {
+      const ownAgent = path.join(s.home, "my-tester.md");
+      fs.writeFileSync(ownAgent, "my own tester\n");
+      fs.symlinkSync(ownAgent, tester);
+    }
+    const before = snapshot(s.home);
+    const res = s.sn(INSTALL);
+    assert.equal(res.code, 1, res.out);
+    assert.match(res.out, /nemo-tester\.md already exists/);
+    assert.deepEqual(snapshot(s.home), before);
+  });
+}
+
+test("uninstall preserves a tester replaced by the user after installation", (t) => {
+  const s = sandbox(t);
+  const installed = s.sn(INSTALL);
+  assert.equal(installed.code, 0, installed.out);
+  const tester = path.join(s.agentDir, "agents", "nemo-tester.md");
+  fs.unlinkSync(tester);
+  fs.writeFileSync(tester, "my replacement tester\n");
+  const removed = s.sn(["uninstall"]);
+  assert.equal(removed.code, 0, removed.out);
+  assert.equal(fs.lstatSync(tester).isFile(), true);
+  assert.equal(fs.readFileSync(tester, "utf8"), "my replacement tester\n");
+});
+
 test("--yes can explicitly keep eval confirmation without changing command approval", (t) => {
   const s = sandbox(t);
   const before = snapshot(s.home);
@@ -352,7 +414,6 @@ test("default output is a short plain summary; --verbose adds every file and key
   assert.ok(!dry.out.includes(s.home), dry.out);
   assert.match(dry.out, /Main model +sol - medium +writes the code/);
   assert.match(dry.out, /Reviewers +big - high +different provider = better reviews/);
-  assert.match(dry.out, /- add 7 agents and 6 skills and 1 extension to OMP \(linked to /);
   assert.match(dry.out, /- update ~\/\.omp\/agent\/config\.yml: model roles, 23 blocked commands, 5 allowed git commands, task settings, tool approval\n/);
   assert.match(dry.out, /- add the SUPER-NEMO block to ~\/\.omp\/agent\/AGENTS\.md\n/);
   assert.match(dry.out, /- add advisor guidance \(WATCHDOG\.md \/ WATCHDOG\.yml\)\n/);

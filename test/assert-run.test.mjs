@@ -58,13 +58,93 @@ test("light fails when an implementer was spawned", (t) => {
   assert.match(res.out, /expected agents exactly \[nemo-quality\]/);
 });
 
-test("normal needs the full review batch", (t) => {
-  const r = smokeRepo(t);
-  const ok = run("normal", r, [taskCall("nemo-implementer"), taskCall("nemo-architect", "nemo-quality", "nemo-qa", "reviewer"), taskCall("nemo-final-review")]);
-  assert.equal(ok.code, 0, ok.out);
-  const missing = run("normal", r, [taskCall("nemo-implementer"), taskCall("nemo-architect", "nemo-quality", "nemo-qa"), taskCall("nemo-final-review")]);
-  assert.equal(missing.code, 1);
-  assert.match(missing.out, /missing agent reviewer/);
+for (const mode of ["normal", "critical", "auto", "implicit"]) {
+  const implementer = mode === "critical" ? "nemo-implementer-critical" : "nemo-implementer";
+  const reviewers = ["nemo-architect", "nemo-quality", "nemo-qa", "reviewer"];
+  if (mode === "critical") reviewers.push("nemo-security");
+
+  test(`${mode} passes with a tester and the complete workflow`, (t) => {
+    const res = run(mode, smokeRepo(t), [
+      taskCall(implementer),
+      taskCall("nemo-tester"),
+      taskCall(...reviewers),
+      taskCall("nemo-final-review"),
+    ]);
+    assert.equal(res.code, 0, res.out);
+    assert.match(res.out, /smoke: PASS/);
+  });
+
+  test(`${mode} rejects an otherwise complete workflow without the tester`, (t) => {
+    const res = run(mode, smokeRepo(t), [
+      taskCall(implementer),
+      taskCall(...reviewers),
+      taskCall("nemo-final-review"),
+    ]);
+    assert.equal(res.code, 1, res.out);
+    assert.match(res.out, /missing agent nemo-tester/);
+    assert.match(res.out, /smoke: FAIL/);
+  });
+
+  for (const { name, calls, diagnostic } of [
+    {
+      name: "tester-only",
+      calls: [taskCall("nemo-tester")],
+      diagnostic: /missing agent nemo-implementer/,
+    },
+    {
+      name: "missing implementer",
+      calls: [taskCall("nemo-tester"), taskCall(...reviewers), taskCall("nemo-final-review")],
+      diagnostic: /missing agent nemo-implementer/,
+    },
+    {
+      name: "tester before implementation even when another tester follows",
+      calls: [
+        taskCall("nemo-tester"),
+        taskCall(implementer),
+        taskCall("nemo-tester"),
+        taskCall(...reviewers),
+        taskCall("nemo-final-review"),
+      ],
+      diagnostic: /tester.*after|separate task call/,
+    },
+    {
+      name: "implementer and tester in the same task call",
+      calls: [taskCall(implementer, "nemo-tester"), taskCall(...reviewers), taskCall("nemo-final-review")],
+      diagnostic: /tester.*after|separate task call/,
+    },
+  ]) {
+    test(`${mode} rejects ${name}`, (t) => {
+      const res = run(mode, smokeRepo(t), calls);
+      assert.equal(res.code, 1, res.out);
+      assert.match(res.out, diagnostic);
+      assert.match(res.out, /smoke: FAIL/);
+    });
+  }
+
+  if (mode === "auto" || mode === "implicit") {
+    test(`${mode} rejects an otherwise complete workflow without QA`, (t) => {
+      const res = run(mode, smokeRepo(t), [
+        taskCall(implementer),
+        taskCall("nemo-tester"),
+        taskCall(...reviewers.filter((agent) => agent !== "nemo-qa")),
+        taskCall("nemo-final-review"),
+      ]);
+      assert.equal(res.code, 1, res.out);
+      assert.match(res.out, /missing agent nemo-qa/);
+      assert.match(res.out, /smoke: FAIL/);
+    });
+  }
+}
+
+test("normal still requires the native reviewer when the tester is present", (t) => {
+  const res = run("normal", smokeRepo(t), [
+    taskCall("nemo-implementer"),
+    taskCall("nemo-tester"),
+    taskCall("nemo-architect", "nemo-quality", "nemo-qa"),
+    taskCall("nemo-final-review"),
+  ]);
+  assert.equal(res.code, 1, res.out);
+  assert.match(res.out, /missing agent reviewer/);
 });
 
 test("an empty diff or failing tests fail the run", (t) => {

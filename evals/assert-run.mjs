@@ -3,15 +3,19 @@ import { execFileSync, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 
+const NORMAL_EXPECT = {
+  includes: ["nemo-implementer", "nemo-tester", "nemo-architect", "nemo-quality", "nemo-qa", "reviewer", "nemo-final-review"],
+  implementer: "nemo-implementer",
+  changes: true,
+};
+
 const EXPECT = {
   light: { exactly: ["nemo-quality"], forbidPrefix: "nemo-implementer", changes: true },
-  normal: {
-    includes: ["nemo-implementer", "nemo-architect", "nemo-quality", "nemo-qa", "reviewer", "nemo-final-review"],
-    changes: true,
-  },
+  normal: NORMAL_EXPECT,
   critical: {
     includes: [
       "nemo-implementer-critical",
+      "nemo-tester",
       "nemo-architect",
       "nemo-security",
       "nemo-quality",
@@ -19,10 +23,11 @@ const EXPECT = {
       "reviewer",
       "nemo-final-review",
     ],
+    implementer: "nemo-implementer-critical",
     changes: true,
   },
-  auto: { includesPrefix: "nemo-", changes: true },
-  implicit: { includesPrefix: "nemo-", changes: true },
+  auto: NORMAL_EXPECT,
+  implicit: NORMAL_EXPECT,
   question: { exactly: [], changes: false },
 };
 
@@ -44,7 +49,7 @@ function readEntries(file) {
   });
 }
 
-function mainSessionAgents(sessionsDir, repoDir) {
+function mainSessionAgentBatches(sessionsDir, repoDir) {
   const repoReal = fs.realpathSync(repoDir);
   const mains = [];
   for (const file of jsonlFiles(sessionsDir)) {
@@ -60,17 +65,17 @@ function mainSessionAgents(sessionsDir, repoDir) {
     if (cwd === repoReal) mains.push(entries);
   }
   if (mains.length !== 1) throw new Error(`expected exactly one main session for ${repoDir}, found ${mains.length}`);
-  const agents = [];
+  const batches = [];
   for (const entry of mains[0]) {
     if (entry.type !== "message" || entry.message?.role !== "assistant") continue;
     for (const part of entry.message.content ?? []) {
       if (part?.type !== "toolCall" || part.name !== "task") continue;
-      for (const task of part.arguments?.tasks ?? []) {
-        if (typeof task?.agent === "string") agents.push(task.agent);
-      }
+      batches.push((part.arguments?.tasks ?? [])
+        .filter((task) => typeof task?.agent === "string")
+        .map((task) => task.agent));
     }
   }
-  return agents;
+  return batches;
 }
 
 function repoChanged(repoDir) {
@@ -80,9 +85,10 @@ function repoChanged(repoDir) {
   return tracked || git("ls-files", "--others", "--exclude-standard").trim() !== "";
 }
 
-function check(mode, agents, { changed, testsPass }) {
+function check(mode, batches, { changed, testsPass }) {
   const want = EXPECT[mode];
   if (!want) return [`unknown mode ${mode}`];
+  const agents = batches.flat();
   const failures = [];
   if (want.exactly && JSON.stringify(agents) !== JSON.stringify(want.exactly)) {
     failures.push(`expected agents exactly [${want.exactly}], got [${agents}]`);
@@ -93,8 +99,13 @@ function check(mode, agents, { changed, testsPass }) {
   for (const name of want.includes ?? []) {
     if (!agents.includes(name)) failures.push(`missing agent ${name} in [${agents}]`);
   }
-  if (want.includesPrefix && !agents.some((a) => a.startsWith(want.includesPrefix))) {
-    failures.push(`expected a ${want.includesPrefix}* agent, got [${agents}]`);
+  if (want.implementer) {
+    const implementerBatch = batches.findIndex((batch) => batch.includes(want.implementer));
+    const testerBatch = batches.findIndex((batch) => batch.includes("nemo-tester"));
+    // Dispatch order is observable here; awaiting and source integration are not.
+    if (testerBatch !== -1 && (implementerBatch === -1 || implementerBatch >= testerBatch)) {
+      failures.push(`expected nemo-tester after ${want.implementer} in a separate task call`);
+    }
   }
   if (want.changes && !changed) failures.push("expected a non-empty diff");
   if (!want.changes && changed) failures.push("expected no changes");
@@ -110,12 +121,13 @@ if (!mode || !sessionsDir || !repoDir) {
 let failures;
 let agents = [];
 try {
-  agents = mainSessionAgents(sessionsDir, repoDir);
+  const batches = mainSessionAgentBatches(sessionsDir, repoDir);
+  agents = batches.flat();
   const changed = repoChanged(repoDir);
   const testsPass = EXPECT[mode]?.changes
     ? spawnSync("npm", ["test", "--silent"], { cwd: repoDir, stdio: "ignore" }).status === 0
     : true;
-  failures = check(mode, agents, { changed, testsPass });
+  failures = check(mode, batches, { changed, testsPass });
 } catch (err) {
   failures = [err.message];
 }
