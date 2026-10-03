@@ -50,11 +50,13 @@ Each diagram starts **after** you have asked OMP to change code. Checks mean the
 flowchart TD
     A["Small, isolated change"] --> B["Implement directly"]
     B --> C["Run relevant checks"]
-    C --> D["Independent quality review"]
-    D --> E{"Fix required?"}
-    E -- Yes --> F["Fix and re-check"]
-    F --> G["Report result"]
-    E -- No --> G
+    C --> D{"Checks green?"}
+    D -- No --> B
+    D -- Yes --> E["Independent quality review"]
+    E --> F{"Fix required?"}
+    F -- Yes --> G["Fix and re-check"]
+    G --> H["Report result"]
+    F -- No --> H
 ```
 
 ### NORMAL
