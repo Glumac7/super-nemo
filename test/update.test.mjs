@@ -5,7 +5,7 @@ import { test } from "node:test";
 import YAML from "yaml";
 import { ANONYMOUS, GH_HINT, GITHUB_URL, PRIVATE_HINT, VIA_GH, githubStyle, remote, sandbox, snapshot } from "./helpers.mjs";
 
-const ANSWERS = ["--yes", "--no-smoke", "--name", "jake", "--approval", "always-ask", "--advisor", "off", "--fast", "alpha/small"];
+const ANSWERS = ["--yes", "--no-smoke", "--name", "jake", "--approval", "always-ask", "--eval-approval", "prompt", "--advisor", "off", "--fast", "alpha/small"];
 
 async function installed(t) {
   const s = sandbox(t);
@@ -36,10 +36,24 @@ test("update fast-forwards, re-applies the recorded answers and reports the chan
   assert.equal(fs.readlinkSync(path.join(s.agentDir, "extensions", "super-nemo.js")), path.join(s.clone, "extensions", "super-nemo.js"));
   const config = YAML.parse(s.read("config.yml"));
   assert.equal(config.tools.approvalMode, "always-ask");
+  assert.equal(config.tools.approval.eval, "prompt");
   assert.equal(config.modelRoles["nemo-fast"], "alpha/small:low");
   assert.deepEqual(config.task.agentAdvisor, { "nemo-implementer": "off", "nemo-implementer-critical": "off" });
   assert.match(s.read("AGENTS.md"), /called SUPER-JAKE/);
-  assert.deepEqual(s.manifest().choices, { name: "jake", impl: "alpha/big:high", fast: "alpha/small:low", advisor: null, advisorCritical: null, review: "beta/sol:high", approval: "always-ask" });
+  assert.deepEqual(s.manifest().choices, { name: "jake", impl: "alpha/big:high", fast: "alpha/small:low", advisor: null, advisorCritical: null, review: "beta/sol:high", approval: "always-ask", evalApproval: "prompt" });
+});
+
+test("update retains legacy manifest-owned eval prompt without recorded consent", async (t) => {
+  const { s, r } = await installed(t);
+  const legacy = s.manifest();
+  delete legacy.choices.evalApproval;
+  assert.equal(legacy.config.keys["tools.approval.eval"].ours, "prompt");
+  fs.writeFileSync(s.manifestPath, JSON.stringify(legacy));
+  r.commit("add a skill", addSkill("nemo-extra"));
+  const updated = s.update();
+  assert.equal(updated.code, 0, updated.out);
+  assert.equal(s.manifest().choices.evalApproval, "prompt");
+  assert.equal(YAML.parse(s.read("config.yml")).tools.approval.eval, "prompt");
 });
 
 test("update when already current says so and writes nothing", async (t) => {

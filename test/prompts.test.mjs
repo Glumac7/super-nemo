@@ -40,14 +40,14 @@ const menu = (said, title) => {
   return said.slice(start + 1, end < 0 ? undefined : end);
 };
 
-test("pressing Enter at the setup question keeps the suggested setup with one question", async () => {
+test("pressing Enter accepts the suggested setup and explicitly defaults eval consent to allow", async () => {
   const d = fresh();
-  const p = scripted(["", ""]);
+  const p = scripted(["", "", ""]);
   const choices = await askChoices(p, models, d);
   assert.equal(p.remaining(), 0);
-  assert.deepEqual(p.asked, [NAME_QUESTION, "Use this setup? [Y/n/c=change] "]);
+  assert.deepEqual(p.asked, [NAME_QUESTION, "Use this setup? [Y/n/c=change] ", "Run eval code without asking for confirmation? (eval can access your files and processes) [Y/n] "]);
   assert.deepEqual(choices, {
-    name: "nemo", impl: "alpha/big:high", fast: null, advisor: "alpha/big:medium", advisorCritical: "alpha/big:high", review: "beta/sol:high", approval: "yolo",
+    name: "nemo", impl: "alpha/big:high", fast: null, advisor: "alpha/big:medium", advisorCritical: "alpha/big:high", review: "beta/sol:high", approval: "yolo", evalApproval: "allow",
   });
   const shown = p.said.join("\n");
   assert.match(shown, /Suggested setup/);
@@ -64,12 +64,12 @@ test("answering n at the setup question returns no choices", async () => {
 });
 
 test("change flow: other model and thinking, cheap = same as main, advisor off skips the critical question", async () => {
-  const p = scripted(["", "c", "4", "2", "1", "1", "1", "", "y", ""]);
+  const p = scripted(["", "c", "4", "2", "1", "1", "1", "", "y", "", ""]);
   const choices = await askChoices(p, models, fresh());
   assert.equal(p.remaining(), 0);
-  assert.deepEqual(choices, { name: "nemo", impl: "beta/sol:medium", fast: null, advisor: null, advisorCritical: null, review: "alpha/big:high", approval: "yolo" });
+  assert.deepEqual(choices, { name: "nemo", impl: "beta/sol:medium", fast: null, advisor: null, advisorCritical: null, review: "alpha/big:high", approval: "yolo", evalApproval: "allow" });
   assert.ok(!p.said.some((l) => l.startsWith("Advisor for critical work")));
-  assert.equal(p.asked.at(-1), "Use this setup? [Y/n/c] ");
+  assert.equal(p.asked.at(-2), "Use this setup? [Y/n/c] ");
   assert.ok(p.said.some((l) => /Your setup/.test(l)));
   const keys = desiredKeys(choices);
   assert.equal(keys["modelRoles.nemo-fast"], undefined);
@@ -81,11 +81,11 @@ test("change flow: other model and thinking, cheap = same as main, advisor off s
 });
 
 test("change flow lists every model across providers once, marks the suggestion and preselects it", async () => {
-  const p = scripted(["", "c", "", "", "3", "", "5", "", "", "", "", "", "", ""]);
+  const p = scripted(["", "c", "", "", "3", "", "5", "", "", "", "", "", "", "", ""]);
   const choices = await askChoices(p, models, fresh());
   assert.equal(p.remaining(), 0);
   assert.deepEqual(choices, {
-    name: "nemo", impl: "alpha/big:high", fast: "alpha/small:low", advisor: "beta/sol:medium", advisorCritical: "beta/sol:high", review: "beta/sol:high", approval: "yolo",
+    name: "nemo", impl: "alpha/big:high", fast: "alpha/small:low", advisor: "beta/sol:medium", advisorCritical: "beta/sol:high", review: "beta/sol:high", approval: "yolo", evalApproval: "allow",
   });
   assert.deepEqual(menu(p.said, "Main model"), ["  1) big - alpha  (suggested)", "  2) small - alpha", "  3) plain - alpha", "  4) sol - beta"]);
   assert.deepEqual(menu(p.said, "Cheap model"), ["  1) same as main  (suggested)", "  2) big - alpha", "  3) small - alpha  (cheapest)", "  4) plain - alpha", "  5) sol - beta"]);
@@ -95,7 +95,7 @@ test("change flow lists every model across providers once, marks the suggestion 
 });
 
 test("a model without thinking levels gets no suffix and no thinking question; bad input re-asks with a hint", async () => {
-  const p = scripted(["", "maybe", "c", "9", "x", "3", "", "", "", "", "", "", "", "", ""]);
+  const p = scripted(["", "maybe", "c", "9", "x", "3", "", "", "", "", "", "", "", "", "", ""]);
   const choices = await askChoices(p, models, fresh());
   assert.equal(p.remaining(), 0);
   assert.equal(choices.impl, "alpha/plain");
@@ -109,7 +109,7 @@ test("a re-install shows the current setup and marks current values", async () =
   const d = computeDefaults(models, doc, { choices: { approval: "always-ask" } }, {});
   assert.equal(d.impl, "alpha/big:medium");
   assert.equal(d.review, "alpha/small:high");
-  const p = scripted(["", "c", "", "", "", "", "", "", "", "", "", "", ""]);
+  const p = scripted(["", "c", "", "", "", "", "", "", "", "", "", "", "", ""]);
   const choices = await askChoices(p, models, d);
   assert.equal(p.remaining(), 0);
   assert.match(p.said[0], /Current setup/);
@@ -117,7 +117,7 @@ test("a re-install shows the current setup and marks current values", async () =
   assert.match(p.said[0], /Auto-approve +off +asks before every command/);
   assert.deepEqual(menu(p.said, "Thinking for big").at(1), "  2) medium  (current)");
   assert.deepEqual(choices, {
-    name: "nemo", impl: "alpha/big:medium", fast: null, advisor: "alpha/big:medium", advisorCritical: "alpha/big:high", review: "alpha/small:high", approval: "always-ask",
+    name: "nemo", impl: "alpha/big:medium", fast: null, advisor: "alpha/big:medium", advisorCritical: "alpha/big:high", review: "alpha/small:high", approval: "always-ask", evalApproval: "prompt",
   });
 });
 
@@ -133,12 +133,12 @@ test("local providers never win cloud suggestions, but explicit and recorded loc
     [defaults.impl, defaults.fast, defaults.advisor, defaults.advisorCritical, defaults.review, defaults.approval],
     ["alpha/big:high", null, "alpha/big:medium", "alpha/big:high", "beta/sol:high", "yolo"],
   );
-  const p = scripted(["", ""]);
+  const p = scripted(["", "", ""]);
   assert.deepEqual(await askChoices(p, inventory, defaults), {
     name: "nemo", impl: defaults.impl, fast: null, advisor: defaults.advisor, advisorCritical: defaults.advisorCritical,
-    review: defaults.review, approval: "yolo",
+    review: defaults.review, approval: "yolo", evalApproval: "allow",
   });
-  assert.deepEqual(p.asked, [NAME_QUESTION, "Use this setup? [Y/n/c=change] "]);
+  assert.deepEqual(p.asked, [NAME_QUESTION, "Use this setup? [Y/n/c=change] ", "Run eval code without asking for confirmation? (eval can access your files and processes) [Y/n] "]);
 
   const selected = computeDefaults(inventory, YAML.parseDocument(""), null, {
     impl: "ollama/giant", fast: "lm-studio/cheap", advisor: "ollama/giant",
@@ -163,7 +163,7 @@ test("changing to local models interactively leaves fast and critical suggestion
     { ...models[1], provider: "lm-studio", selector: "lm-studio/cheap", costOutput: 0 },
   ];
   const inventory = [...local, ...models];
-  const p = scripted(["", "c", "1", "", "", "", "3", "", "", "", "", "", "", ""]);
+  const p = scripted(["", "c", "1", "", "", "", "3", "", "", "", "", "", "", "", ""]);
   const choices = await askChoices(p, inventory, computeDefaults(inventory, YAML.parseDocument(""), null, {}));
   assert.equal(p.remaining(), 0);
   assert.deepEqual([choices.impl, choices.fast, choices.advisor, choices.advisorCritical, choices.review, choices.approval],
@@ -174,20 +174,20 @@ test("changing to local models interactively leaves fast and critical suggestion
 
   const doc = YAML.parseDocument("modelRoles:\n  nemo-fast: lm-studio/cheap:low\n");
   const current = computeDefaults(inventory, doc, { choices: { approval: "write" } }, {});
-  const keep = scripted(["", "c", "1", "", "", "", "", "", "", "", "", "", "", ""]);
+  const keep = scripted(["", "c", "1", "", "", "", "", "", "", "", "", "", "", "", ""]);
   const changed = await askChoices(keep, inventory, current);
   assert.equal(keep.remaining(), 0);
   assert.equal(changed.fast, "lm-studio/cheap:low");
   assert.ok(menu(keep.said, "Cheap model").includes("  3) cheap - lm-studio  (current)"));
 
   const sameAsMain = computeDefaults(inventory, YAML.parseDocument(""), { choices: { fast: null, approval: "write" } }, {});
-  const recorded = scripted(["", "c", "1", ...Array(10).fill("")]);
+  const recorded = scripted(["", "c", "1", ...Array(11).fill("")]);
   const retained = await askChoices(recorded, inventory, sameAsMain);
   assert.equal(recorded.remaining(), 0);
   assert.equal(retained.fast, null);
   assert.ok(menu(recorded.said, "Cheap model").includes("  1) same as main  (current)"));
 
-  const twoChanges = scripted(["", "c", ...Array(10).fill(""), "c", "1", ...Array(11).fill("")]);
+  const twoChanges = scripted(["", "c", ...Array(10).fill(""), "c", "1", ...Array(12).fill("")]);
   const secondPass = await askChoices(twoChanges, inventory, computeDefaults(inventory, YAML.parseDocument(""), null, {}));
   assert.equal(twoChanges.remaining(), 0);
   assert.equal(secondPass.impl, "ollama/giant:high");
@@ -214,6 +214,28 @@ test("an existing approval choice beats the new YOLO fallback", () => {
   assert.equal(computeDefaults(models, doc, { choices: { approval: "write" } }, {}).approval, "write");
 });
 
+test("eval consent defaults yes, no requires approval, and legacy managed prompt is retained", async () => {
+  const no = scripted(["", "", "n"]);
+  const choices = await askChoices(no, models, fresh());
+  assert.equal(choices.evalApproval, "prompt");
+  assert.equal(desiredKeys(choices)["tools.approval.eval"], "prompt");
+  assert.match(no.said.at(-1), /Eval approval +prompt +asks before running eval code/);
+  const legacy = { config: { keys: { "tools.approval.eval": { ours: "prompt" } } } };
+  const defaults = computeDefaults(models, YAML.parseDocument("tools:\n  approval:\n    eval: deny\n"), legacy, {});
+  assert.equal(defaults.evalApproval, "prompt");
+  assert.equal(computeDefaults(models, YAML.parseDocument(""), legacy, { "eval-approval": "allow" }).evalApproval, "allow");
+  assert.equal(computeDefaults(models, YAML.parseDocument(""), { ...legacy, choices: { evalApproval: "invalid" } }, {}).evalApproval, "prompt");
+  for (const keys of [{}, { "tools.approval.eval": { ours: "deny" } }]) {
+    const untrusted = { config: { keys }, choices: { evalApproval: "invalid" } };
+    const fallback = computeDefaults(models, YAML.parseDocument("tools:\n  approval:\n    eval: allow\n"), untrusted, {});
+    assert.equal(fallback.evalApproval, "prompt");
+    assert.equal(desiredKeys(fallback)["tools.approval.eval"], "prompt");
+  }
+  const current = scripted(["", "", ""]);
+  assert.equal((await askChoices(current, models, defaults)).evalApproval, "prompt");
+  assert.match(current.asked.at(-1), /\[y\/N\] $/);
+});
+
 test("a model with missing or null output cost is never taken as the cheapest fast model", async (t) => {
   const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "sn-models-")), "models.json");
   t.after(() => fs.rmSync(path.dirname(file), { recursive: true, force: true }));
@@ -225,7 +247,7 @@ test("a model with missing or null output cost is never taken as the cheapest fa
   process.env.SN_MODELS_JSON = file;
   t.after(() => delete process.env.SN_MODELS_JSON);
   const loaded = await loadModels({});
-  const p = scripted(["", "c", "", "", "", "", "", "", "", "", "", "", ""]);
+  const p = scripted(["", "c", "", "", "", "", "", "", "", "", "", "", "", ""]);
   await askChoices(p, loaded, computeDefaults(loaded, YAML.parseDocument(""), null, {}));
   assert.equal(p.remaining(), 0);
   assert.deepEqual(menu(p.said, "Cheap model").filter((l) => l.includes("(cheapest)")), ["  3) small - alpha  (cheapest)"]);
@@ -243,7 +265,7 @@ test("the name question keeps the default on Enter, takes a typed name and re-as
 });
 
 test("the typed name ends up in the choices and in the setup table", async () => {
-  const p = scripted(["jake", ""]);
+  const p = scripted(["jake", "", ""]);
   const choices = await askChoices(p, models, fresh());
   assert.equal(choices.name, "jake");
   assert.match(p.said[0], /Name +SUPER-JAKE +start a message with super-jake: to call it/);

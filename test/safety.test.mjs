@@ -25,6 +25,19 @@ function pendingFrom(m, overrides = {}) {
   };
 }
 
+test("invalid eval approval is rejected before recovering a pending install", (t) => {
+  const s = sandbox(t);
+  assert.equal(s.sn(INSTALL).code, 0);
+  fs.writeFileSync(s.manifestPath, JSON.stringify(pendingFrom(s.manifest())));
+  const before = snapshot(s.home);
+  const rejected = s.sn(["install", "--yes", "--eval-approval", "deny", "--no-smoke"]);
+  assert.equal(rejected.code, 2, rejected.out);
+  assert.match(rejected.out, /--eval-approval must be one of allow, prompt/);
+  assert.doesNotMatch(rejected.out, /rolling it back/);
+  assert.deepEqual(snapshot(s.home), before);
+  assert.equal(s.manifest().status, "pending");
+});
+
 test("a tampered manifest cannot make uninstall delete paths it does not own", (t) => {
   const s = sandbox(t);
   s.write("AGENTS.md", "# My rules\n");
