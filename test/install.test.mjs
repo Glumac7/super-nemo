@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
@@ -27,11 +28,28 @@ test("fresh install then uninstall leaves agent dir and home as they were", (t) 
   assert.equal(fs.readlinkSync(path.join(s.snHome, "current")), REPO);
   const config = YAML.parse(s.read("config.yml"));
   assert.equal(config.tools.approvalMode, "yolo");
-  assert.equal(config.tools.approval.eval, "prompt");
+  assert.equal(config.tools.approval.eval, "allow");
+  assert.equal(s.manifest().choices.evalApproval, "allow");
+  assert.equal(s.manifest().config.keys["tools.approval.eval"].ours, "allow");
+  const verified = s.sn(["verify"]);
+  assert.equal(verified.code, 0, verified.out);
   assert.equal(config.task.isolation.enabled, true);
   assert.equal(config.advisor.syncBacklog, "3");
   assert.deepEqual(config.bash.patterns, [...DENY, ...ALLOW]);
   assert.ok(!config.bash.patterns.some((p) => p.match.includes("git push")));
+  assert.equal(s.sn(["uninstall"]).code, 0);
+  assert.deepEqual(snapshot(s.home), before);
+});
+
+test("--yes can explicitly keep eval confirmation without changing command approval", (t) => {
+  const s = sandbox(t);
+  const before = snapshot(s.home);
+  const installed = s.sn([...INSTALL, "--eval-approval", "prompt", "--approval", "write"]);
+  assert.equal(installed.code, 0, installed.out);
+  assert.match(installed.out, /Eval approval +prompt/);
+  assert.equal(s.manifest().choices.evalApproval, "prompt");
+  assert.equal(YAML.parse(s.read("config.yml")).tools.approval.eval, "prompt");
+  assert.equal(s.sn(["verify"]).code, 0);
   assert.equal(s.sn(["uninstall"]).code, 0);
   assert.deepEqual(snapshot(s.home), before);
 });
@@ -124,6 +142,188 @@ test("reinstall of an older manifest adds the sn launcher without changing model
   assert.deepEqual(s.manifest().choices, prior.choices);
 });
 
+test("status reports legacy managed eval allow without a recorded choice", (t) => {
+  const s = sandbox(t);
+  assert.equal(s.sn(INSTALL).code, 0);
+  const legacy = s.manifest();
+  delete legacy.choices.evalApproval;
+  fs.writeFileSync(s.manifestPath, JSON.stringify(legacy));
+  const shown = s.sn(["status"]);
+  assert.equal(shown.code, 0, shown.out);
+  assert.match(shown.out, /Eval approval +allow +runs eval code without asking/);
+});
+
+test("unknown legacy eval ownership cannot replace live allow on --reuse or --yes without explicit replacement", (t) => {
+  const s = sandbox(t);
+  assert.equal(s.sn(INSTALL).code, 0);
+  const prior = s.manifest();
+  delete prior.choices.evalApproval;
+  delete prior.config.keys["tools.approval.eval"];
+  fs.writeFileSync(s.manifestPath, JSON.stringify(prior));
+  const before = snapshot(s.home);
+  const shown = s.sn(["status"]);
+  assert.equal(shown.code, 0, shown.out);
+  assert.match(shown.out, /Eval approval +unmanaged +not managed by SUPER-NEMO/);
+  for (const args of [["install", "--reuse", "--no-smoke"], INSTALL, [...INSTALL, "--overwrite-drift"], [...INSTALL, "--eval-approval", "prompt"]]) {
+    const stopped = s.sn(args);
+    assert.equal(stopped.code, 3, stopped.out);
+    assert.deepEqual(snapshot(s.home), before);
+  }
+  const replaced = s.sn([...INSTALL, "--eval-approval", "prompt", "--overwrite-drift"]);
+  assert.equal(replaced.code, 0, replaced.out);
+  assert.equal(s.manifest().choices.evalApproval, "prompt");
+  assert.equal(YAML.parse(s.read("config.yml")).tools.approval.eval, "prompt");
+});
+
+test("unknown legacy eval ownership cannot silently weaken a user's deny setting", (t) => {
+  const s = sandbox(t);
+  assert.equal(s.sn(INSTALL).code, 0);
+  const doc = YAML.parseDocument(s.read("config.yml"));
+  doc.setIn(["tools", "approval", "eval"], "deny");
+  s.write("config.yml", doc.toString());
+  const prior = s.manifest();
+  delete prior.choices.evalApproval;
+  delete prior.config.keys["tools.approval.eval"];
+  fs.writeFileSync(s.manifestPath, JSON.stringify(prior));
+  const before = snapshot(s.home);
+  for (const args of [["install", "--reuse", "--no-smoke"], INSTALL, [...INSTALL, "--overwrite-drift"]]) {
+    const stopped = s.sn(args);
+    assert.equal(stopped.code, 3, stopped.out);
+    assert.deepEqual(snapshot(s.home), before);
+  }
+  const replaced = s.sn([...INSTALL, "--eval-approval", "prompt", "--overwrite-drift"]);
+  assert.equal(replaced.code, 0, replaced.out);
+  assert.equal(YAML.parse(s.read("config.yml")).tools.approval.eval, "prompt");
+  assert.equal(s.sn(["uninstall"]).code, 0);
+  assert.equal(YAML.parse(s.read("config.yml")).tools.approval.eval, "deny");
+});
+
+test("unsupported legacy eval provenance cannot claim ownership or bypass the deny drift gate", (t) => {
+  for (const existing of ["deny", "unsupported"]) {
+    const s = sandbox(t);
+    assert.equal(s.sn(INSTALL).code, 0);
+    const doc = YAML.parseDocument(s.read("config.yml"));
+    doc.setIn(["tools", "approval", "eval"], existing);
+    s.write("config.yml", doc.toString());
+    const malformed = s.manifest();
+    if (existing === "deny") delete malformed.choices.evalApproval;
+    malformed.config.keys["tools.approval.eval"].ours = existing;
+    fs.writeFileSync(s.manifestPath, JSON.stringify(malformed));
+    const before = snapshot(s.home);
+    const shown = s.sn(["status"]);
+    assert.equal(shown.code, 0, shown.out);
+    assert.match(shown.out, /Eval approval +unmanaged +not managed by SUPER-NEMO/);
+    for (const args of [["install", "--reuse", "--no-smoke"], INSTALL, [...INSTALL, "--overwrite-drift"]]) {
+      const stopped = s.sn(args);
+      assert.equal(stopped.code, 3, stopped.out);
+      assert.deepEqual(snapshot(s.home), before);
+    }
+    const adopted = s.sn([...INSTALL, "--eval-approval", "prompt", "--overwrite-drift"]);
+    assert.equal(adopted.code, 0, adopted.out);
+    assert.equal(s.manifest().config.keys["tools.approval.eval"].ours, "prompt");
+    assert.equal(YAML.parse(s.read("config.yml")).tools.approval.eval, "prompt");
+    assert.equal(s.sn(["uninstall"]).code, 0);
+    assert.equal(YAML.parse(s.read("config.yml")).tools.approval.eval, existing);
+  }
+});
+
+test("legacy managed eval prompt remains prompt on reuse and --yes; explicit allow migrates and uninstall restores", (t) => {
+  const s = sandbox(t);
+  const original = "# my approval settings\ntools:\n  approvalMode: write\n  approval:\n    eval: prompt\n";
+  s.write("config.yml", original);
+  const before = snapshot(s.home);
+  assert.equal(s.sn(INSTALL).code, 0);
+
+  // Model an installation made when the managed eval value was prompt.
+  const doc = YAML.parseDocument(s.read("config.yml"));
+  doc.setIn(["tools", "approval", "eval"], "prompt");
+  const previousConfig = doc.toString();
+  s.write("config.yml", previousConfig);
+  const previous = s.manifest();
+  delete previous.choices.evalApproval;
+  previous.config.keys["tools.approval.eval"].ours = "prompt";
+  previous.files.config.postHash = createHash("sha256").update(previousConfig).digest("hex");
+  fs.writeFileSync(s.manifestPath, JSON.stringify(previous));
+  const shown = s.sn(["status"]);
+  assert.equal(shown.code, 0, shown.out);
+  assert.match(shown.out, /Eval approval +prompt +asks before running eval code/);
+
+  const retained = s.sn(["install", "--reuse", "--no-smoke"]);
+  assert.equal(retained.code, 0, retained.out);
+  const config = YAML.parse(s.read("config.yml"));
+  assert.equal(config.tools.approvalMode, "write");
+  assert.equal(config.tools.approval.eval, "prompt");
+  assert.deepEqual(s.manifest().config.keys["tools.approval.eval"], {
+    prior: { value: "prompt" },
+    ours: "prompt",
+  });
+  assert.equal(s.manifest().choices.evalApproval, "prompt");
+  assert.equal(s.sn([...INSTALL]).code, 0);
+  assert.equal(YAML.parse(s.read("config.yml")).tools.approval.eval, "prompt");
+  const migrated = s.sn([...INSTALL, "--eval-approval", "allow"]);
+  assert.equal(migrated.code, 0, migrated.out);
+  assert.equal(YAML.parse(s.read("config.yml")).tools.approval.eval, "allow");
+  const verified = s.sn(["verify"]);
+  assert.equal(verified.code, 0, verified.out);
+  assert.match(verified.out, /^OK Installation OK$/m);
+
+  const allowedConfig = s.read("config.yml");
+  s.write("config.yml", previousConfig);
+  const drift = s.sn(["verify"]);
+  assert.equal(drift.code, 1, drift.out);
+  assert.match(drift.out, /config\.yml: tools\.approval\.eval/);
+  s.write("config.yml", allowedConfig);
+  const removed = s.sn(["uninstall"]);
+  assert.equal(removed.code, 0, removed.out);
+  assert.equal(s.read("config.yml"), original);
+  assert.deepEqual(snapshot(s.home), before);
+});
+
+test("reuse records already-allowed eval from an older manifest without overriding user drift", (t) => {
+  const s = sandbox(t);
+  const original = "tools:\n  approvalMode: write\n  approval:\n    eval: prompt\n";
+  s.write("config.yml", original);
+  const before = snapshot(s.home);
+  assert.equal(s.sn(INSTALL).code, 0);
+  const allowedConfig = s.read("config.yml");
+  const previous = s.manifest();
+  delete previous.choices.evalApproval;
+  previous.config.keys["tools.approval.eval"].ours = "prompt";
+  fs.writeFileSync(s.manifestPath, JSON.stringify(previous));
+  const previousManifest = fs.readFileSync(s.manifestPath, "utf8");
+
+  const doc = YAML.parseDocument(allowedConfig);
+  doc.setIn(["tools", "approval", "eval"], "deny");
+  const userConfig = doc.toString();
+  s.write("config.yml", userConfig);
+  const blocked = s.sn(["install", "--reuse", "--no-smoke"]);
+  assert.equal(blocked.code, 3, blocked.out);
+  assert.match(blocked.out, /tools\.approval\.eval/);
+  assert.equal(s.read("config.yml"), userConfig);
+  assert.equal(fs.readFileSync(s.manifestPath, "utf8"), previousManifest);
+
+  s.write("config.yml", allowedConfig);
+  const migrated = s.sn(["install", "--reuse", "--eval-approval", "allow", "--no-smoke"]);
+  assert.equal(migrated.code, 0, migrated.out);
+  assert.equal(s.read("config.yml"), allowedConfig);
+  assert.deepEqual(s.manifest().config.keys["tools.approval.eval"], {
+    prior: { value: "prompt" },
+    ours: "allow",
+  });
+  const verified = s.sn(["verify"]);
+  assert.equal(verified.code, 0, verified.out);
+  assert.match(verified.out, /^OK Installation OK$/m);
+
+  const installed = snapshot(s.home);
+  const rerun = s.sn(["install", "--reuse", "--no-smoke"]);
+  assert.equal(rerun.code, 0, rerun.out);
+  assert.match(rerun.out, /Nothing to change/);
+  assert.deepEqual(snapshot(s.home), installed);
+  assert.equal(s.sn(["uninstall"]).code, 0);
+  assert.equal(s.read("config.yml"), original);
+  assert.deepEqual(snapshot(s.home), before);
+});
+
 test("dry-run install and dry-run uninstall write nothing", (t) => {
   const s = sandbox(t);
   seedUserContent(s);
@@ -214,6 +414,7 @@ test("invalid selector or unsupported thinking level exits 2 and writes nothing"
     [["--impl", "alpha/big:max"], /thinking level "max" is not supported by alpha\/big; supported: low, medium, high, xhigh/],
     [["--review", "alpha/plain:high"], /not supported by alpha\/plain; supported: none/],
     [["--fast", "beta/nothing"], /--fast: unknown model selector/],
+    [["--eval-approval", "deny"], /--eval-approval must be one of/],
     [["--approval", "sometimes"], /--approval must be one of/],
     [["--advisor", "off", "--advisor-critical", "alpha/big"], /cannot be combined/],
   ];

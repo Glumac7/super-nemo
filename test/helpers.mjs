@@ -89,8 +89,11 @@ function templateRemote() {
   gitSync(work, ["add", "-A"]);
   gitSync(work, ["add", "-f", "node_modules"]);
   gitSync(work, ["commit", "-qm", "fixture"]);
-  template = path.join(root, "template.git");
-  gitSync(root, ["clone", "-q", "--bare", work, template]);
+  const bare = path.join(root, "template.git");
+  gitSync(root, ["init", "-q", "--bare", bare]);
+  gitSync(work, ["push", "-q", bare, "HEAD:refs/heads/main"]);
+  gitSync(bare, ["symbolic-ref", "HEAD", "refs/heads/main"]);
+  template = bare;
   return template;
 }
 
@@ -111,7 +114,7 @@ export function remote(t) {
       gitSync(work, ["commit", "-qm", message]);
       gitSync(work, ["push", "-q", "origin", "main"]);
       const sha = gitSync(work, ["rev-parse", "HEAD"]);
-      fs.rmSync(work, { recursive: true, force: true });
+      fs.rmSync(work, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
       return sha;
     },
   };
