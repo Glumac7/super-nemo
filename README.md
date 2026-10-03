@@ -142,3 +142,112 @@ For an installer-managed official GitHub checkout on `main`, interactive OMP ses
 Running the one-line installer again updates its managed checkout. `~/.super-nemo/repo/sn uninstall` asks before removing anything and keeps settings you changed yourself. Use `~/.super-nemo/repo/sn --help` for flags, including `--dry-run` to preview actions and `--profile` for a non-default OMP profile. If you cloned the repository yourself, run `./sn install` and `./sn update --dry-run` / `./sn update` from that checkout instead; these checkouts do not receive automatic notices.
 
 **Costs and safety:** Reviews and the optional live test make model calls, which can incur API charges. The fresh-install YOLO default removes OMP command approval prompts. If you accept eval auto-approval, it applies even with `--approval write` or `--approval always-ask`: eval can execute local code with access to your files and processes without asking first. Choose no at the eval question or pass `--eval-approval prompt` to require eval confirmation. Command deny rules are *not a sandbox*, and a project-level OMP config can replace them. Review commands and permissions before using this on a sensitive project. See the [workflow](skills/super-nemo/SKILL.md) for the full mode rules.
+
+## Local Linear automation (macOS)
+
+The standalone daemon polls Linear every 30–60 seconds (45 by default) and processes only issues with the **exact `auto-implement` label** in an explicitly mapped project. Issue descriptions and all comments are untrusted task context, never configuration. Repository paths and GitHub destinations come only from the operator's allowlist; the repository origin must match it. Automation is **PR-only**: a branch and pull request are the handoff, not permission to merge, deploy, destroy data/infrastructure, or access secrets. **Human review is required** before merging.
+
+### Prepare one configuration
+
+Use Node.js 20+, Git, GitHub CLI authenticated for the allowed repositories, and an absolute executable path to OMP. Run `omp login` for your selected model providers, then install and verify SUPER-NEMO with `sn install` and `sn verify`. If using an OMP profile, configure provider login and SUPER-NEMO in that same profile (`sn install --profile <name>`); set `profile` in the daemon configuration. Provider credentials remain in OMP's external profile, separate from the Linear token.
+
+Look up each project's actual UUID in Linear (project details/API or the Linear integration's project lookup). Do not use the project name, issue identifier, or a guessed ID. The following **three initial mapping examples** are placeholders: replace all UUIDs, both operator-selected repository paths, all GitHub destinations, and the executable path before use. AI Demo's example repository is `/Users/glumac/coding/ai-operations-agent-demo`; Super-Nemo and Portfolio require the operator's actual local checkout paths.
+
+```json
+{
+  "stateDir": "/Users/glumac/.super-nemo/linear-state",
+  "tokenFile": "/Users/glumac/.config/super-nemo/linear-token",
+  "pollSeconds": 45,
+  "allowPublish": true,
+  "ghPath": "/opt/homebrew/bin/gh",
+  "ompPath": "/absolute/path/to/omp",
+  "projects": {
+    "11111111-1111-4111-8111-111111111111": {
+      "name": "AI Demo",
+      "repo": "/Users/glumac/coding/ai-operations-agent-demo",
+      "github": "YOUR_OWNER/YOUR_AI_DEMO_REPO"
+    },
+    "22222222-2222-4222-8222-222222222222": {
+      "name": "Super-Nemo",
+      "repo": "/absolute/operator-selected/super-nemo",
+      "github": "Glumac7/super-nemo"
+    },
+    "33333333-3333-4333-8333-333333333333": {
+      "name": "Portfolio",
+      "repo": "/absolute/operator-selected/portfolio",
+      "github": "YOUR_OWNER/YOUR_PORTFOLIO_REPO"
+    }
+  }
+}
+```
+
+Keep the configuration, token, state, logs, and OMP profile **outside every repository/worktree**. Use owner-only directories (`0700`) and owner-only regular files (`0600`) for configuration and token; the token file must belong to your user, must not be a symlink, and is opened without following symlinks. Create the token through a trusted secret-management tool/editor rather than putting it in shell history or command arguments. Never commit it. The persistent daemon requires `tokenFile`; do **not** put a token in a plist, environment block, or `launchctl setenv`. The daemon reads it privately and does not forward it into the agent environment.
+
+For example, prepare the directory and save the configuration as `~/.config/super-nemo/linear.json`:
+
+```sh
+umask 077
+mkdir -p "$HOME/.config/super-nemo"
+chmod 700 "$HOME/.config/super-nemo"
+# Save linear.json and linear-token privately using your trusted editor/tool.
+chmod 600 "$HOME/.config/super-nemo/linear.json" "$HOME/.config/super-nemo/linear-token"
+```
+
+Use **one configuration and one daemon per macOS user**, containing all project mappings. The canonical registry/lock in `~/.super-nemo/linear-control` is independent of `stateDir`; a different configuration/state root is rejected until explicit uninstall. Do not copy/delete the registry, locks, or claims to bypass serialization.
+
+### Run and operate
+
+From the SUPER-NEMO checkout, with an absolute configuration path:
+
+```sh
+node lib/linear-cli.mjs status --config "$HOME/.config/super-nemo/linear.json"
+node lib/linear-cli.mjs once --config "$HOME/.config/super-nemo/linear.json"
+node lib/linear-cli.mjs run --config "$HOME/.config/super-nemo/linear.json"
+```
+
+`once` is a real processing pass, not a dry run: it can start paid agents and produce PRs. `run` polls continuously. Do not run another copy alongside it. The durable claim is recorded before side effects and launch intent before spawn. Execution is serialized; accepted tasks run with the `super-nemo:` workflow prefix from a private nonprotected Git worktree.
+
+`allowPublish: true` is the trusted operator's explicit authorization to commit and push **only the generated nonprotected branch** and open a ready PR to that project's configured GitHub repository. GitHub CLI (`gh`) authentication is required; PR metadata must match the branch and head. It never authorizes merge or deploy. This option defaults to `false`, which retains a local branch instead of publishing a PR. Human review must still inspect the PR and verification evidence.
+
+Set `ghPath` to your actual absolute executable path (for example `/usr/local/bin/gh` on Intel Homebrew instead of the Apple Silicon example), and authenticate it with `gh auth login` outside repositories. When publishing is authorized, the agent's minimal `PATH` includes the directory of that configured executable; it also includes the daemon's Node runtime directory so an OMP launcher using `/usr/bin/env node` can start under launchd. It does not inherit your interactive shell's `PATH` or environment. The publisher verifies PR destination, generated branch/head and ready status, but that metadata is not independent proof that verification checks passed.
+
+Configured OMP/GitHub executables must resolve to regular executable files owned by your user or root, without group/world write permissions, under trusted parent directories. The runner revalidates them before execution. User-controlled symlinked parent directories are rejected; a trusted final executable symlink can resolve to a validated target.
+
+**A private worktree is not a sandbox.** OMP runs as your user and can access other same-user files, processes, network, and provider credentials. The automation's prompt restrictions and minimal child environment are not hard isolation. Review OMP/profile permissions, repository-local settings, command approvals, and account scope before applying the label to untrusted content. Keep valuable secrets away from that account or use an independently configured OS sandbox/account.
+
+To install a persistent user LaunchAgent:
+
+```sh
+node lib/linear-cli.mjs install --config "$HOME/.config/super-nemo/linear.json"
+```
+
+Install records absolute Node/CLI/config arguments in an owner-only plist under `~/Library/LaunchAgents`, with a stable config-derived `com.super-nemo.linear.<hash>` label, `RunAtLoad` and `KeepAlive`. Logs are private files in `<stateDir>/launchd`. It never overwrites an existing plist. Install holds the canonical control-plane lock through plist creation and bootstrap; the service may initially fail to acquire the lock, then `KeepAlive` retries after install releases it. Bootstrap and bootout target only your `gui/<uid>` service, never the system domain or unrelated jobs. Keep this checkout and Node executable at their installed absolute paths; uninstall before moving/updating those paths or changing the configuration's state location. On bootstrap failure the owned plist and registration remain for explicit inspection/recovery.
+
+Progress and terminal notifications are durable bounded outbox entries. Network failures retry **notifications only**, using deterministic comment markers to recover an uncertain post without launching the task again:
+
+```sh
+node lib/linear-cli.mjs retry --config "$HOME/.config/super-nemo/linear.json"
+node lib/linear-cli.mjs status --config "$HOME/.config/super-nemo/linear.json"
+```
+
+Linear comments contain controlled status and verified branch/PR metadata, not copied issue text or raw agent output. Retained private task logs provide verification details; inspect locally and redact before sharing.
+
+### Recovery and uninstall
+
+Execution is **at most once**, not guaranteed completion. A crash in claimed/preparing/launch-intent/running state becomes `interrupted-in-doubt` and is never automatically relaunched. Failed/interrupted issues remain actionable for human investigation. `retry` cannot retry execution. Restarting, removing/reapplying the label, or uninstalling does not erase claims.
+
+```sh
+node lib/linear-cli.mjs uninstall --config "$HOME/.config/super-nemo/linear.json"
+```
+
+Uninstall holds the control-plane lock through scoped bootout, removal of its unchanged owned plist, and registration release. It refuses an active/ambiguous lock **before any service or plist changes**. Stop the exact installed service first with `launchctl bootout "gui/$(id -u)/<label>"` (replace `<label>` with the label reported by install), and confirm the poller and all agent descendants have stopped. Never stop unrelated services. Uninstall preserves all state, claims, logs, branches and worktrees. A missing plist is **not proof** that its job is stopped: uninstall still attempts scoped bootout. If bootout fails, it releases registration only when a separate `launchctl print` probe reports the exact scoped service as absent; all other failures preserve registration. A failed bootstrap/bootout may require manual scoped service inspection before another uninstall.
+
+For an interrupted/uncertain execution, inspect `status`, the retained worktree, branch, logs and PR. Only after confirming the poller **and all agent descendants** have stopped, explicitly acknowledge that issue using its full Linear UUID:
+
+```sh
+node lib/linear-cli.mjs acknowledge --config "$HOME/.config/super-nemo/linear.json" --issue "<issue-UUID>" --confirm-stopped
+node lib/linear-cli.mjs retry --config "$HOME/.config/super-nemo/linear.json"
+node lib/linear-cli.mjs status --config "$HOME/.config/super-nemo/linear.json"
+```
+
+`--confirm-stopped` is your assertion that **all** relevant processes are stopped, not an automatic process check; PID absence/reuse alone is insufficient evidence. Acknowledgement durably records `acknowledged-interruption`, queues a terminal notification and clears the matching interrupted lock; it never reruns the issue. `retry` delivers notifications only. Do not manually delete locks, registration or claims to bypass recovery or trigger another execution. A lock without a matching interrupted issue cannot be recovered with this command; retain it and investigate rather than guessing an issue UUID. Uninstall does not revoke your Linear token or OMP/GitHub login: revoke credentials separately with their providers if retiring the automation.
