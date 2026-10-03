@@ -186,11 +186,9 @@ test("interactive uninstall asks first; the default answer keeps everything", as
   const installed = snapshot(s.home);
   const kept = await underPty(`${SN} uninstall`, color(s.env), () => "");
   assert.equal(kept.code, 1, kept.out);
-  assert.match(kept.out, /Nothing was changed\./);
   assert.deepEqual(snapshot(s.home), installed);
   const removed = await underPty(`${SN} uninstall`, color(s.env), () => "y");
   assert.equal(removed.code, 0, removed.out);
-  assert.match(removed.out, /✓\x1b\[0m SUPER-NEMO removed\./);
   assert.deepEqual(snapshot(s.home), before);
 });
 

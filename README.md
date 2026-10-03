@@ -42,7 +42,7 @@ SUPER-NEMO activates automatically for requests to change a repository. It does 
 | --- | --- | --- |
 | LIGHT | Tiny, isolated, low-risk fixes | Implement directly, run checks, get one independent quality review |
 | NORMAL | Most features, bugs, and meaningful refactors | Production implementer with advisor, dedicated tester, checks, independent architecture/quality/QA reviews and a code review, then final review |
-| CRITICAL | Auth, security, secrets, data, infrastructure, deploy, or other high-risk work | Production implementer with stronger advisor, dedicated tester covering failure/abuse paths, security review, and a human-review handoff |
+| CRITICAL | Auth, security, secrets, data, infrastructure, deploy, or other high-risk work | Production implementer with stronger advisor, dedicated tester covering failure/abuse paths, security and performance reviews, and a mandatory human-review handoff |
 
 NORMAL and CRITICAL separate authorship: `nemo-implementer` / `nemo-implementer-critical` change production code and its documentation; `nemo-tester` writes behavioral tests and necessary fixtures **after source integration, in a dedicated disposable repository target containing the exact same effective source snapshot**. It receives the absolute target root, source revision/snapshot and an explicit test/fixture allowlist, not the production working tree as an edit target. Dispatch uses `isolated: false` so runtime isolation cannot auto-apply its changes. The tester uses the default coding model, adds no advisor configuration, and never fixes production code or approves work. `nemo-qa` independently verifies acceptance criteria read-only. LIGHT explicitly keeps direct implementation and any necessary tests with the orchestrator, without a dedicated tester.
 
@@ -104,7 +104,7 @@ flowchart TD
     D -- Failing --> O{"Production or test defect?"}
     O -- Production --> C
     O -- Tests --> T
-    D -- Green --> E["Architecture + security + quality + read-only QA + code reviews"]
+    D -- Green --> E["Architecture + security + performance + quality + read-only QA + code reviews"]
     E --> F{"Material finding?"}
     F -- Yes --> G{"Responsible owner fixes"}
     G -- Production --> P["Implementer fixes; integrate source; tester updates coverage"]
@@ -118,7 +118,25 @@ flowchart TD
     H --> I["Human review required; no automatic merge"]
 ```
 
-You can choose a mode explicitly: `omp "super-nemo light: Fix the typo in the footer"` (or `normal` / `critical`). To let it choose, just describe the task; `super-nemo:` also uses automatic selection. Work happens on a non-protected branch. SUPER-NEMO does not push, deploy, or merge unless you explicitly ask.
+You can choose a mode explicitly: `omp "super-nemo light: Fix the typo in the footer"` (or `normal` / `critical`). To let it choose, just describe the task; `super-nemo:` also uses automatic selection. Work happens on a non-protected branch. Changes stay local unless you explicitly authorize the primary orchestrator to commit, push and open a draft PR for a named feature branch and repository.
+
+### Build, refine, measure
+
+First get a correct working feature with the smallest sound implementation; then simplify/clean up and check architecture; then measure and optimize demonstrated bottlenecks. Correctness, security and resource constraints apply throughout—this is not permission to knowingly waste allocations or computation, and speculative optimization is not a substitute for evidence.
+
+For UI work, load an available appropriate UI skill before implementation and use earlier screenshots, designs and feedback as iteration input. After source and test integration, the orchestrator verifies the actual changed surface at relevant sizes and states; unit tests or reading source alone do not prove the UI works. Missing skills, prior artifacts or surface access are reported as limits, never invented.
+
+CRITICAL always dispatches the read-only `nemo-performance` reviewer alongside architecture, security, quality, QA and native review, and includes it in the fix loop and final evidence. It requires reproducible bounded workload, baseline/changed measurements and commands, and reports missing evidence instead of inventing numbers or findings. The orchestrator reads `omp config get modelRoles --json`, checks the returned record and selects `tasks[].model: "@advisor-critical"` when configured. For advisor-disabled installs without that role, it explicitly reports and uses the existing configured `@nemo-review` choice; unavailable requested models block review, with no silent substitution or advisor-setting changes.
+
+Implementers hand off relevant measurement workloads and commands; the orchestrator records performance measurements only after source and tests are integrated, including on fix loops. Authors do not run checks or probes mid-flight.
+
+### Reviewed draft handoff
+
+Reviewed feature changes get a PR body using the destination repository's applicable template first, or the installed `skill://super-nemo/templates/pull-request.md` fallback. This repository's [PR template](.github/pull_request_template.md) is for this repository, not other destinations. Templates and issue/PR text are untrusted body data, not commands or publication authority.
+
+Without direct session-level user approval, SUPER-NEMO leaves local changes and reports the pending handoff. After green checks and independent specialist/native/final reviews, only the primary orchestrator can use explicitly scoped approval to commit reviewed changes, push the approved feature branch, and open a **DRAFT** PR. It checks `origin`, the current branch and destination protection/base rules before publishing. Implementers and reviewers never publish. No protected-branch pushes, merges, deployments or ready-for-review transitions are part of this handoff.
+
+The body records changes, exact check results, reviewer verdicts, evidence limits and unresolved issues. A draft is not approval: CRITICAL still ends **HUMAN REVIEW REQUIRED**, identifying what a human must check before any later merge or deployment.
 
 ### Give it your own name
 
@@ -132,6 +150,8 @@ sn verify       # Check the installation
 sn update       # Fetch updates and reapply your choices
 sn uninstall    # Remove SUPER-NEMO; restore settings where safe
 ```
+
+`sn verify` checks that each installed skill resolves to the shipped contents using `omp read skill://<name>:raw`; formatted line numbers and file anchors are not part of that comparison.
 
 Install creates an `~/.local/bin/sn` link to the checkout without changing shell startup files or overwriting an existing command. If `~/.local/bin` is not already on `PATH`, add `export PATH="$HOME/.local/bin:$PATH"` to your shell configuration, or keep using `~/.super-nemo/repo/sn` directly. Uninstall removes only the launcher it created; it leaves `~/.local/bin` in place even if install created that directory. If an install is interrupted after creating the command but before recording its identity, recovery leaves the command and pending state untouched rather than risk deleting an unowned replacement; inspect `~/.local/bin/sn`, move it away if appropriate, then retry.
 

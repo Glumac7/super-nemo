@@ -20,6 +20,7 @@ const EXPECT = {
       "nemo-security",
       "nemo-quality",
       "nemo-qa",
+      "nemo-performance",
       "reviewer",
       "nemo-final-review",
     ],
@@ -49,7 +50,7 @@ function readEntries(file) {
   });
 }
 
-function mainSessionAgentBatches(sessionsDir, repoDir) {
+function mainSessionTaskCalls(sessionsDir, repoDir) {
   const repoReal = fs.realpathSync(repoDir);
   const mains = [];
   for (const file of jsonlFiles(sessionsDir)) {
@@ -65,17 +66,15 @@ function mainSessionAgentBatches(sessionsDir, repoDir) {
     if (cwd === repoReal) mains.push(entries);
   }
   if (mains.length !== 1) throw new Error(`expected exactly one main session for ${repoDir}, found ${mains.length}`);
-  const batches = [];
+  const calls = [];
   for (const entry of mains[0]) {
     if (entry.type !== "message" || entry.message?.role !== "assistant") continue;
     for (const part of entry.message.content ?? []) {
       if (part?.type !== "toolCall" || part.name !== "task") continue;
-      batches.push((part.arguments?.tasks ?? [])
-        .filter((task) => typeof task?.agent === "string")
-        .map((task) => task.agent));
+      calls.push((part.arguments?.tasks ?? []).filter((task) => typeof task?.agent === "string"));
     }
   }
-  return batches;
+  return calls;
 }
 
 function repoChanged(repoDir) {
@@ -85,7 +84,8 @@ function repoChanged(repoDir) {
   return tracked || git("ls-files", "--others", "--exclude-standard").trim() !== "";
 }
 
-function check(mode, batches, { changed, testsPass }) {
+function check(mode, calls, { changed, testsPass, expectedPerformanceModel }) {
+  const batches = calls.map((tasks) => tasks.map((task) => task.agent));
   const want = EXPECT[mode];
   if (!want) return [`unknown mode ${mode}`];
   const agents = batches.flat();
@@ -107,27 +107,40 @@ function check(mode, batches, { changed, testsPass }) {
       failures.push(`expected nemo-tester after ${want.implementer} in a separate task call`);
     }
   }
+  if (mode === "critical") {
+    const reviewers = ["nemo-architect", "nemo-security", "nemo-quality", "nemo-qa", "nemo-performance", "reviewer"];
+    const finalIndex = calls.findIndex((tasks) => tasks.some((task) => task.agent === "nemo-final-review"));
+    const reviewBatch = calls.some((tasks, index) =>
+      index < finalIndex && reviewers.every((agent) => tasks.some((task) => task.agent === agent)));
+    if (!reviewBatch) failures.push("expected the full critical review batch before nemo-final-review");
+    for (const task of calls.flat().filter((task) => task.agent === "nemo-performance")) {
+      if (task.model !== expectedPerformanceModel) {
+        failures.push(`nemo-performance requires explicit model ${expectedPerformanceModel}, got ${JSON.stringify(task.model) ?? "missing"}`);
+      }
+    }
+  }
   if (want.changes && !changed) failures.push("expected a non-empty diff");
   if (!want.changes && changed) failures.push("expected no changes");
   if (want.changes && !testsPass) failures.push("npm test failed in the smoke repo");
   return failures;
 }
 
-const [mode, sessionsDir, repoDir] = process.argv.slice(2);
-if (!mode || !sessionsDir || !repoDir) {
-  console.error("usage: assert-run.mjs <mode> <sessions-dir> <repo-dir>");
+const [mode, sessionsDir, repoDir, expectedPerformanceModel] = process.argv.slice(2);
+if (!mode || !sessionsDir || !repoDir ||
+    (mode === "critical" && !["@advisor-critical", "@nemo-review"].includes(expectedPerformanceModel))) {
+  console.error("usage: assert-run.mjs <mode> <sessions-dir> <repo-dir> <expected-performance-model (required for critical: @advisor-critical|@nemo-review)>");
   process.exit(2);
 }
 let failures;
 let agents = [];
 try {
-  const batches = mainSessionAgentBatches(sessionsDir, repoDir);
-  agents = batches.flat();
+  const calls = mainSessionTaskCalls(sessionsDir, repoDir);
+  agents = calls.flat().map((task) => task.agent);
   const changed = repoChanged(repoDir);
   const testsPass = EXPECT[mode]?.changes
     ? spawnSync("npm", ["test", "--silent"], { cwd: repoDir, stdio: "ignore" }).status === 0
     : true;
-  failures = check(mode, batches, { changed, testsPass });
+  failures = check(mode, calls, { changed, testsPass, expectedPerformanceModel });
 } catch (err) {
   failures = [err.message];
 }
