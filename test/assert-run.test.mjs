@@ -58,19 +58,101 @@ test("light fails when an implementer was spawned", (t) => {
   assert.match(res.out, /expected agents exactly \[nemo-quality\]/);
 });
 
-test("normal needs the full review batch", (t) => {
-  const r = smokeRepo(t);
-  const ok = run("normal", r, [taskCall("nemo-implementer"), taskCall("nemo-architect", "nemo-quality", "nemo-qa", "reviewer"), taskCall("nemo-final-review")]);
-  assert.equal(ok.code, 0, ok.out);
-  const missing = run("normal", r, [taskCall("nemo-implementer"), taskCall("nemo-architect", "nemo-quality", "nemo-qa"), taskCall("nemo-final-review")]);
-  assert.equal(missing.code, 1);
-  assert.match(missing.out, /missing agent reviewer/);
+for (const mode of ["normal", "critical", "auto", "implicit"]) {
+  const implementer = mode === "critical" ? "nemo-implementer-critical" : "nemo-implementer";
+  const reviewers = ["nemo-architect", "nemo-quality", "nemo-qa", "reviewer"];
+  const expectedModel = mode === "critical" ? "@advisor-critical" : undefined;
+  if (mode === "critical") reviewers.push("nemo-security", { agent: "nemo-performance", model: expectedModel });
+
+  test(`${mode} passes with a tester and the complete workflow`, (t) => {
+    const res = run(mode, smokeRepo(t), [
+      taskCall(implementer),
+      taskCall("nemo-tester"),
+      taskCall(...reviewers),
+      taskCall("nemo-final-review"),
+    ], expectedModel);
+    assert.equal(res.code, 0, res.out);
+    assert.match(res.out, /smoke: PASS/);
+  });
+
+  test(`${mode} rejects an otherwise complete workflow without the tester`, (t) => {
+    const res = run(mode, smokeRepo(t), [
+      taskCall(implementer),
+      taskCall(...reviewers),
+      taskCall("nemo-final-review"),
+    ], expectedModel);
+    assert.equal(res.code, 1, res.out);
+    assert.match(res.out, /missing agent nemo-tester/);
+    assert.match(res.out, /smoke: FAIL/);
+  });
+
+  for (const { name, calls, diagnostic } of [
+    {
+      name: "tester-only",
+      calls: [taskCall("nemo-tester")],
+      diagnostic: /missing agent nemo-implementer/,
+    },
+    {
+      name: "missing implementer",
+      calls: [taskCall("nemo-tester"), taskCall(...reviewers), taskCall("nemo-final-review")],
+      diagnostic: /missing agent nemo-implementer/,
+    },
+    {
+      name: "tester before implementation even when another tester follows",
+      calls: [
+        taskCall("nemo-tester"),
+        taskCall(implementer),
+        taskCall("nemo-tester"),
+        taskCall(...reviewers),
+        taskCall("nemo-final-review"),
+      ],
+      diagnostic: /tester.*after|separate task call/,
+    },
+    {
+      name: "implementer and tester in the same task call",
+      calls: [taskCall(implementer, "nemo-tester"), taskCall(...reviewers), taskCall("nemo-final-review")],
+      diagnostic: /tester.*after|separate task call/,
+    },
+  ]) {
+    test(`${mode} rejects ${name}`, (t) => {
+      const res = run(mode, smokeRepo(t), calls, expectedModel);
+      assert.equal(res.code, 1, res.out);
+      assert.match(res.out, diagnostic);
+      assert.match(res.out, /smoke: FAIL/);
+    });
+  }
+
+  if (mode === "auto" || mode === "implicit") {
+    test(`${mode} rejects an otherwise complete workflow without QA`, (t) => {
+      const res = run(mode, smokeRepo(t), [
+        taskCall(implementer),
+        taskCall("nemo-tester"),
+        taskCall(...reviewers.filter((agent) => agent !== "nemo-qa")),
+        taskCall("nemo-final-review"),
+      ]);
+      assert.equal(res.code, 1, res.out);
+      assert.match(res.out, /missing agent nemo-qa/);
+      assert.match(res.out, /smoke: FAIL/);
+    });
+  }
+}
+
+test("normal still requires the native reviewer when the tester is present", (t) => {
+  const res = run("normal", smokeRepo(t), [
+    taskCall("nemo-implementer"),
+    taskCall("nemo-tester"),
+    taskCall("nemo-architect", "nemo-quality", "nemo-qa"),
+    taskCall("nemo-final-review"),
+  ]);
+  assert.equal(res.code, 1, res.out);
+  assert.match(res.out, /missing agent reviewer/);
 });
 
 test("critical requires performance review in the main session", (t) => {
   const r = smokeRepo(t);
   const calls = [
     taskCall("nemo-implementer-critical"),
+    taskCall("nemo-tester"),
     taskCall("nemo-architect", "nemo-security", "nemo-quality", "nemo-qa", "reviewer"),
     taskCall("nemo-final-review"),
   ];
@@ -85,8 +167,9 @@ test("critical requires performance review in the main session", (t) => {
 
   const ok = run("critical", r, [
     calls[0],
+    calls[1],
     criticalBatch("@advisor-critical"),
-    calls[2],
+    calls[3],
   ], "@advisor-critical");
   assert.equal(ok.code, 0, ok.out);
   assert.match(ok.out, /smoke: PASS/);
@@ -102,19 +185,20 @@ test("critical rejects performance dispatched separately or after final review",
   const review = taskCall("nemo-architect", "nemo-security", "nemo-quality", "nemo-qa", "reviewer");
   const performance = taskCall({ agent: "nemo-performance", model: "@advisor-critical" });
   const impl = taskCall("nemo-implementer-critical");
+  const tester = taskCall("nemo-tester");
   const final = taskCall("nemo-final-review");
   for (const calls of [
-    [impl, review, performance, final],
-    [impl, review, final, performance],
-    [impl, final, criticalBatch("@advisor-critical")],
-    [impl, final, criticalBatch("@advisor-critical"), final],
+    [impl, tester, review, performance, final],
+    [impl, tester, review, final, performance],
+    [impl, tester, final, criticalBatch("@advisor-critical")],
+    [impl, tester, final, criticalBatch("@advisor-critical"), final],
   ]) {
     const res = run("critical", r, calls, "@advisor-critical");
     assert.equal(res.code, 1, res.out);
     assert.match(res.out, /full critical review batch before nemo-final-review/);
   }
   const preplan = run("critical", r, [
-    taskCall("nemo-architect"), impl, criticalBatch("@advisor-critical"), final,
+    taskCall("nemo-architect"), impl, tester, criticalBatch("@advisor-critical"), final,
   ], "@advisor-critical");
   assert.equal(preplan.code, 0, preplan.out);
 });
@@ -123,7 +207,7 @@ test("critical requires the expected explicit performance model override", (t) =
   const r = smokeRepo(t);
   for (const model of [undefined, "@default", "@nemo-review"]) {
     const res = run("critical", r, [
-      taskCall("nemo-implementer-critical"), criticalBatch(model), taskCall("nemo-final-review"),
+      taskCall("nemo-implementer-critical"), taskCall("nemo-tester"), criticalBatch(model), taskCall("nemo-final-review"),
     ], "@advisor-critical");
     assert.equal(res.code, 1, res.out);
     assert.match(res.out, /nemo-performance requires explicit model @advisor-critical/);
@@ -132,7 +216,7 @@ test("critical requires the expected explicit performance model override", (t) =
 
 test("critical requires an allowed model expectation and supports explicit reviewer fallback", (t) => {
   const r = smokeRepo(t);
-  const calls = [taskCall("nemo-implementer-critical"), criticalBatch("@nemo-review"), taskCall("nemo-final-review")];
+  const calls = [taskCall("nemo-implementer-critical"), taskCall("nemo-tester"), criticalBatch("@nemo-review"), taskCall("nemo-final-review")];
   for (const expected of [undefined, "@default", ""]) {
     const res = run("critical", r, calls, expected);
     assert.equal(res.code, 2, res.out);
@@ -142,7 +226,7 @@ test("critical requires an allowed model expectation and supports explicit revie
   assert.equal(ok.code, 0, ok.out);
   assert.match(ok.out, /smoke: PASS/);
   const missing = run("critical", r, [
-    calls[0], criticalBatch(), calls[2],
+    calls[0], calls[1], criticalBatch(), calls[3],
   ], "@nemo-review");
   assert.equal(missing.code, 1, missing.out);
   assert.match(missing.out, /nemo-performance requires explicit model @nemo-review/);
@@ -187,6 +271,7 @@ const call = (tasks) => ({ type: "message", message: { role: "assistant", conten
 const agent = (name) => ({ agent: name });
 const entries = process.env.SMOKE_MODE === "critical" ? [
   call([agent("nemo-implementer-critical")]),
+  call([agent("nemo-tester")]),
   call(["nemo-architect", "nemo-security", "nemo-quality", "nemo-qa", "reviewer"].map(agent).concat(
     { agent: "nemo-performance", model: process.env.SMOKE_MODEL })),
   call([agent("nemo-final-review")]),

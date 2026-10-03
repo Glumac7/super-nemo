@@ -3,15 +3,19 @@ import { execFileSync, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 
+const NORMAL_EXPECT = {
+  includes: ["nemo-implementer", "nemo-tester", "nemo-architect", "nemo-quality", "nemo-qa", "reviewer", "nemo-final-review"],
+  implementer: "nemo-implementer",
+  changes: true,
+};
+
 const EXPECT = {
   light: { exactly: ["nemo-quality"], forbidPrefix: "nemo-implementer", changes: true },
-  normal: {
-    includes: ["nemo-implementer", "nemo-architect", "nemo-quality", "nemo-qa", "reviewer", "nemo-final-review"],
-    changes: true,
-  },
+  normal: NORMAL_EXPECT,
   critical: {
     includes: [
       "nemo-implementer-critical",
+      "nemo-tester",
       "nemo-architect",
       "nemo-security",
       "nemo-quality",
@@ -20,10 +24,11 @@ const EXPECT = {
       "reviewer",
       "nemo-final-review",
     ],
+    implementer: "nemo-implementer-critical",
     changes: true,
   },
-  auto: { includesPrefix: "nemo-", changes: true },
-  implicit: { includesPrefix: "nemo-", changes: true },
+  auto: NORMAL_EXPECT,
+  implicit: NORMAL_EXPECT,
   question: { exactly: [], changes: false },
 };
 
@@ -80,9 +85,10 @@ function repoChanged(repoDir) {
 }
 
 function check(mode, calls, { changed, testsPass, expectedPerformanceModel }) {
-  const agents = calls.flat().map((task) => task.agent);
+  const batches = calls.map((tasks) => tasks.map((task) => task.agent));
   const want = EXPECT[mode];
   if (!want) return [`unknown mode ${mode}`];
+  const agents = batches.flat();
   const failures = [];
   if (want.exactly && JSON.stringify(agents) !== JSON.stringify(want.exactly)) {
     failures.push(`expected agents exactly [${want.exactly}], got [${agents}]`);
@@ -93,8 +99,13 @@ function check(mode, calls, { changed, testsPass, expectedPerformanceModel }) {
   for (const name of want.includes ?? []) {
     if (!agents.includes(name)) failures.push(`missing agent ${name} in [${agents}]`);
   }
-  if (want.includesPrefix && !agents.some((a) => a.startsWith(want.includesPrefix))) {
-    failures.push(`expected a ${want.includesPrefix}* agent, got [${agents}]`);
+  if (want.implementer) {
+    const implementerBatch = batches.findIndex((batch) => batch.includes(want.implementer));
+    const testerBatch = batches.findIndex((batch) => batch.includes("nemo-tester"));
+    // Dispatch order is observable here; awaiting and source integration are not.
+    if (testerBatch !== -1 && (implementerBatch === -1 || implementerBatch >= testerBatch)) {
+      failures.push(`expected nemo-tester after ${want.implementer} in a separate task call`);
+    }
   }
   if (mode === "critical") {
     const reviewers = ["nemo-architect", "nemo-security", "nemo-quality", "nemo-qa", "nemo-performance", "reviewer"];

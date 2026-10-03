@@ -41,6 +41,68 @@ test("fresh install then uninstall leaves agent dir and home as they were", (t) 
   assert.deepEqual(snapshot(s.home), before);
 });
 
+test("the tester is installed, required by verify, repaired on reinstall, and removed on uninstall", (t) => {
+  const s = sandbox(t);
+  const before = snapshot(s.home);
+  const tester = path.join(s.agentDir, "agents", "nemo-tester.md");
+  const source = path.join(REPO, "agents", "nemo-tester.md");
+  const installed = s.sn(INSTALL);
+  assert.equal(installed.code, 0, installed.out);
+  assert.equal(fs.readlinkSync(tester), source);
+  assert.ok(s.manifest().symlinks.includes(tester));
+  const verified = s.sn(["verify"]);
+  assert.equal(verified.code, 0, verified.out);
+
+  fs.unlinkSync(tester);
+  const missing = s.sn(["verify"]);
+  assert.equal(missing.code, 1, missing.out);
+  assert.match(missing.out, /agents\/nemo-tester\.md is not a symlink/);
+
+  const repaired = s.sn(INSTALL);
+  assert.equal(repaired.code, 0, repaired.out);
+  assert.equal(fs.readlinkSync(tester), source);
+  assert.ok(s.manifest().symlinks.includes(tester));
+  const reverified = s.sn(["verify"]);
+  assert.equal(reverified.code, 0, reverified.out);
+
+  const removed = s.sn(["uninstall"]);
+  assert.equal(removed.code, 0, removed.out);
+  assert.equal(fs.existsSync(tester), false);
+  assert.deepEqual(snapshot(s.home), before);
+});
+
+for (const kind of ["regular file", "foreign symlink"]) {
+  test(`install preserves a conflicting tester ${kind} without writing`, (t) => {
+    const s = sandbox(t);
+    const tester = path.join(s.agentDir, "agents", "nemo-tester.md");
+    fs.mkdirSync(path.dirname(tester));
+    if (kind === "regular file") fs.writeFileSync(tester, "my own tester\n");
+    else {
+      const ownAgent = path.join(s.home, "my-tester.md");
+      fs.writeFileSync(ownAgent, "my own tester\n");
+      fs.symlinkSync(ownAgent, tester);
+    }
+    const before = snapshot(s.home);
+    const res = s.sn(INSTALL);
+    assert.equal(res.code, 1, res.out);
+    assert.match(res.out, /nemo-tester\.md already exists/);
+    assert.deepEqual(snapshot(s.home), before);
+  });
+}
+
+test("uninstall preserves a tester replaced by the user after installation", (t) => {
+  const s = sandbox(t);
+  const installed = s.sn(INSTALL);
+  assert.equal(installed.code, 0, installed.out);
+  const tester = path.join(s.agentDir, "agents", "nemo-tester.md");
+  fs.unlinkSync(tester);
+  fs.writeFileSync(tester, "my replacement tester\n");
+  const removed = s.sn(["uninstall"]);
+  assert.equal(removed.code, 0, removed.out);
+  assert.equal(fs.lstatSync(tester).isFile(), true);
+  assert.equal(fs.readFileSync(tester, "utf8"), "my replacement tester\n");
+});
+
 test("--yes can explicitly keep eval confirmation without changing command approval", (t) => {
   const s = sandbox(t);
   const before = snapshot(s.home);
@@ -342,6 +404,17 @@ test("dry-run install and dry-run uninstall write nothing", (t) => {
   assert.deepEqual(snapshot(s.home), installed);
 });
 
+test("default CLI output does not expose absolute home paths or internal details", (t) => {
+  const s = sandbox(t);
+  seedUserContent(s);
+  const internal = new RegExp(`${INTERNAL.source}|\\x1b\\[`);
+  for (const cmd of [[...INSTALL, "--dry-run"], INSTALL, ["status"], ["verify"], ["uninstall"]]) {
+    const result = s.sn(cmd);
+    assert.equal(result.code, 0, result.out);
+    assert.doesNotMatch(result.out, internal, cmd[0]);
+    assert.ok(!result.out.includes(s.home), `${cmd[0]}: ${result.out}`);
+  }
+});
 
 test("an existing regular file at a target aborts before any write", (t) => {
   const s = sandbox(t);
