@@ -1,8 +1,19 @@
 # SUPER-NEMO
 
-SUPER-NEMO is a coding workflow for [Oh My Pi](https://github.com/can1357/oh-my-pi) (`omp`). It picks a review process based on the risk of your request: small changes stay small; higher-risk changes get more checks and independent reviewers. It runs inside OMP, not as a separate chat app.
+SUPER-NEMO is a risk-routed coding workflow for [Oh My Pi](https://github.com/can1357/oh-my-pi) (`omp`). It runs inside OMP while you work on **your** Git repository; it is not a separate chat app or a library you add to your project. A small change gets a short review path; higher-risk changes get more checks and independent reviewers.
 
-We use OMP because SuperNemo isn't just “an AI that writes code.” It's an orchestration system of implementers, advisors and independent reviewers, and OMP gives us unusually good primitives for building that
+## What's in this repository?
+
+| Path | Purpose |
+| --- | --- |
+| [`skills/super-nemo/SKILL.md`](skills/super-nemo/SKILL.md) | Routing rules, exact steps for each mode, and review gates |
+| [`agents/`](agents/) | Implementer and independent reviewer roles used by OMP |
+| [`extensions/`](extensions/) | OMP integration for the workflow |
+| [`standards/`](standards/) | Engineering baseline applied during work |
+| [`sn`](sn), [`lib/`](lib/), [`install.sh`](install.sh) | Installer and commands to manage or verify the OMP setup |
+| [`test/`](test/), [`evals/`](evals/) | Automated tests and live smoke evaluation |
+
+Installation links this workflow into your OMP configuration and sets up model roles; the actual code changes happen in whichever Git repository you open with OMP. Reviewers inspect the change; they do not replace your approval or a security sandbox.
 
 ## Install
 
@@ -23,13 +34,61 @@ cd path/to/your-project
 omp "Fix the login form error and check the changed behavior"
 ```
 
-SUPER-NEMO activates automatically for requests to change a repository. It does not run for questions or code-reading requests. It selects:
+SUPER-NEMO activates automatically for requests to change a repository. It does not run for questions or code-reading requests. Risk determines the mode:
 
-| Mode | When | What happens |
+| Mode | When | Review path |
 | --- | --- | --- |
-| LIGHT | Small, low-risk changes | Implement, check, quality review |
-| NORMAL | Most code changes | Implementer with advisor; checks and independent reviews |
-| CRITICAL | Security, secrets, data, deploy, or other high-risk changes | Stronger advisor, security review, and human-review handoff |
+| LIGHT | Tiny, isolated, low-risk fixes | Implement directly, run checks, get one independent quality review |
+| NORMAL | Most features, bugs, and meaningful refactors | Implementer with advisor, checks, independent architecture/quality/QA reviews and a code review, then final review |
+| CRITICAL | Auth, security, secrets, data, infrastructure, deploy, or other high-risk work | Stronger advisor, security review, failure/abuse checks, and a human-review handoff |
+
+Each diagram starts **after** you have asked OMP to change code. Checks mean the relevant repository checks; a failing check or material review finding returns to the implementer for a fix and re-check. See the [full workflow](skills/super-nemo/SKILL.md) for routing and review criteria.
+
+### LIGHT
+
+```mermaid
+flowchart TD
+    A["Small, isolated change"] --> B["Implement directly"]
+    B --> C["Run relevant checks"]
+    C --> D["Independent quality review"]
+    D --> E{"Fix required?"}
+    E -- Yes --> F["Fix and re-check"]
+    F --> G["Report result"]
+    E -- No --> G
+```
+
+### NORMAL
+
+```mermaid
+flowchart TD
+    A["Most code changes"] --> B["Implementer + advisor"]
+    B --> C["Run relevant checks"]
+    C -- Failing --> B
+    C -- Green --> D["Architecture + quality + QA + code reviews"]
+    D --> E{"Material finding?"}
+    E -- Yes --> F["Implementer fixes; re-check affected paths"]
+    F --> J["Re-run failed reviews only"]
+    J --> E
+    E -- No --> G["Independent final review"]
+    G --> H["Report result"]
+```
+
+### CRITICAL
+
+```mermaid
+flowchart TD
+    A["High-risk change"] --> B["Requirements + threat sketch"]
+    B --> C["Critical implementer + stronger advisor"]
+    C --> D["Checks including security and failure/abuse paths"]
+    D -- Failing --> C
+    D -- Green --> E["Architecture + security + quality + QA + code reviews"]
+    E --> F{"Material finding?"}
+    F -- Yes --> G["Implementer fixes; re-check affected paths"]
+    G --> J["Re-run failed reviews only"]
+    J --> F
+    F -- No --> H["Independent final review"]
+    H --> I["Human review required; no automatic merge"]
+```
 
 You can choose a mode explicitly: `omp "super-nemo light: Fix the typo in the footer"` (or `normal` / `critical`). To let it choose, just describe the task; `super-nemo:` also uses automatic selection. Work happens on a non-protected branch. SUPER-NEMO does not push, deploy, or merge unless you explicitly ask.
 
