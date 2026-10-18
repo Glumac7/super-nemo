@@ -54,6 +54,18 @@ If the runtime cannot preserve trusted session state or prevent auto-application
 
 Each diagram starts **after** you have asked OMP to change code. The orchestrator runs relevant repository checks after source and tests are integrated. Red checks and material findings go to the responsible owner: production defects to the implementer, test/fixture defects or missing coverage to the tester, with specific evidence. Tests must not be weakened to fit a production defect. Source fixes are integrated before the tester updates coverage; affected checks and failed review gates then run again. See the [full workflow](skills/super-nemo/SKILL.md) for routing and review criteria.
 
+### Stronger review prompts
+
+The [workflow](skills/super-nemo/SKILL.md#review-techniques) incorporates three techniques without adding another agent or command:
+
+| Technique | How to use it | Workflow behavior |
+| --- | --- | --- |
+| Elegant solution | “Knowing everything you know now, scrap this and implement the elegant solution.” | A default checkpoint asks whether the working patch can be simpler. Cleanup stays within scope, preserves unrelated work and goes through the existing checks and reviews. It is not permission for a wholesale rewrite. |
+| Reverse PR review | “Grill me on these changes and don't make a PR until I pass your test.” | Explicit opt-in only; otherwise the default workflow is unchanged. The agent asks diff-specific questions, explains what evidence answers need and evaluates your answers. Until your answers are satisfactory, it leaves the patch local: no commit, push or PR, including drafts, even with publication authorization or in unattended runs. No human pass is fabricated. |
+| Behavioral proof | “Prove to me this works by diffing the behavior between main and this feature branch.” | For changed runtime behavior, compare the same safe, bounded scenario with identical inputs and environment on the recorded baseline and feature snapshot in disposable local targets. Before implementation, preserve the identity and safely reconstructable state of relevant pre-existing tracked/untracked changes, excluding secrets and ignored private files. Include equivalent pre-existing state in both targets so only this task's changes are attributed to the feature; clean worktrees still use the baseline revision alone. Record snapshot/pre-task state identities, inputs/environment, exact commands, outputs and intended differences. `main` is only an example: use the project's approved baseline. If state cannot be safely captured/reconstructed or comparison is unsafe/unavailable, report the comparison unavailable and claims unproven, never substitute clean HEAD for a dirty baseline. |
+
+Passing reverse review does not replace independent reviewers or authorize publication. Documentation-only changes verify the instructions directly rather than claiming a runtime behavior difference.
+
 ### LIGHT
 
 ```mermaid
