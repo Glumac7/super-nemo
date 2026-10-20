@@ -83,11 +83,10 @@ test("a re-install asks about each changed setting in plain words and lists the 
   const doc = YAML.parseDocument(s.read("config.yml"));
   doc.setIn(["task", "agentModelOverrides", "scout"], "@nemo-review");
   s.write("config.yml", doc.toString());
-  const { out, questions } = await underPty(`${SN} install`, { ...s.env, NO_COLOR: "1" }, () => "");
-  assert.match(questions[0], /What should it be called\? super-<name> \[nemo\]: $/);
-  assert.match(questions[1], /Current setup[\s\S]*Use this setup\? \[Y\/n\/c=change\] $/);
-  assert.match(questions[2], /Run eval code without asking for confirmation\?.*\[Y\/n\] $/);
-  assert.match(questions[3], /Model for scout: you changed this to Reviewers model since install; replace it with same as main\? \(config\.yml: task\.agentModelOverrides\.scout\) \[y\/N\] $/);
+  const { code, out, questions } = await underPty(`${SN} install`, { ...s.env, NO_COLOR: "1" },
+    (q) => /Keep all these changed settings\?/.test(q) ? "n" : "");
+  assert.equal(code, 0, out);
+  assert.ok(questions.some((q) => /Model for scout:.*replace it/.test(q)), questions.join("\n"));
   assert.match(out, /\r\n {2}! Model for scout: you changed this to Reviewers model; kept it \(config\.yml: task\.agentModelOverrides\.scout\)\r\n/);
   assert.equal(YAML.parse(s.read("config.yml")).task.agentModelOverrides.scout, "@nemo-review");
   assert.doesNotMatch(withoutKeyRefs(questions.slice(0, 3).join("")), INTERNAL);
@@ -104,17 +103,16 @@ test("reinstall preserves an unowned eval deny by default and only replaces it a
   delete legacy.config.keys["tools.approval.eval"];
   fs.writeFileSync(s.manifestPath, JSON.stringify(legacy));
 
-  const kept = await underPty(`${SN} install`, { ...s.env, NO_COLOR: "1" }, () => "");
+  const kept = await underPty(`${SN} install`, { ...s.env, NO_COLOR: "1" },
+    (q) => /Keep all these changed settings\?/.test(q) ? "n" : "");
   assert.equal(kept.code, 0, kept.out);
-  assert.match(kept.questions.find((q) => /not previously managed; let SUPER-NEMO manage it/.test(q)) ?? "",
-    /Eval approval: is deny and was not previously managed; let SUPER-NEMO manage it as prompt\?.*\[y\/N\] $/);
   assert.equal(YAML.parse(s.read("config.yml")).tools.approval.eval, "deny");
   assert.equal(Object.hasOwn(s.manifest().config.keys, "tools.approval.eval"), false);
   assert.match(s.sn(["status"]).out, /Eval approval +unmanaged +not managed by SUPER-NEMO/);
   assert.equal(s.sn(["install", "--reuse", "--no-smoke"]).code, 3);
 
   const confirmed = await underPty(`${SN} install`, { ...s.env, NO_COLOR: "1" },
-    (q) => /not previously managed; let SUPER-NEMO manage it/.test(q) ? "y" : "");
+    (q) => /Keep all these changed settings\?/.test(q) ? "n" : /not previously managed; let SUPER-NEMO manage it/.test(q) ? "y" : "");
   assert.equal(confirmed.code, 0, confirmed.out);
   assert.equal(YAML.parse(s.read("config.yml")).tools.approval.eval, "prompt");
   assert.equal(s.manifest().config.keys["tools.approval.eval"].ours, "prompt");
@@ -135,10 +133,9 @@ test("a legacy live prompt remains unmanaged until its owner consents to adoptin
     assert.deepEqual(snapshot(s.home), before);
   }
 
-  const kept = await underPty(`${SN} install`, { ...s.env, NO_COLOR: "1" }, () => "");
+  const kept = await underPty(`${SN} install`, { ...s.env, NO_COLOR: "1" },
+    (q) => /Keep all these changed settings\?/.test(q) ? "n" : "");
   assert.equal(kept.code, 0, kept.out);
-  assert.match(kept.questions.find((q) => /not previously managed; let SUPER-NEMO manage it/.test(q)) ?? "",
-    /Eval approval: is prompt and was not previously managed; let SUPER-NEMO manage it as prompt\?.*\[y\/N\] $/);
   assert.equal(s.manifest().choices.evalApproval, "prompt");
   assert.equal(Object.hasOwn(s.manifest().config.keys, "tools.approval.eval"), false);
   assert.match(s.sn(["status"]).out, /Eval approval +unmanaged +not managed by SUPER-NEMO/);
@@ -162,16 +159,15 @@ test("malformed eval ownership cannot skip the interactive deny confirmation", a
   malformed.config.keys["tools.approval.eval"].ours = "deny";
   fs.writeFileSync(s.manifestPath, JSON.stringify(malformed));
 
-  const kept = await underPty(`${SN} install`, { ...s.env, NO_COLOR: "1" }, () => "");
+  const kept = await underPty(`${SN} install`, { ...s.env, NO_COLOR: "1" },
+    (q) => /Keep all these changed settings\?/.test(q) ? "n" : "");
   assert.equal(kept.code, 0, kept.out);
-  assert.match(kept.questions.find((q) => /not previously managed; let SUPER-NEMO manage it/.test(q)) ?? "",
-    /Eval approval: is deny and was not previously managed; let SUPER-NEMO manage it as allow\?.*\[y\/N\] $/);
   assert.equal(YAML.parse(s.read("config.yml")).tools.approval.eval, "deny");
   assert.equal(Object.hasOwn(s.manifest().config.keys, "tools.approval.eval"), false);
   assert.match(s.sn(["status"]).out, /Eval approval +unmanaged +not managed by SUPER-NEMO/);
 
   const adopted = await underPty(`${SN} install`, { ...s.env, NO_COLOR: "1" },
-    (q) => /not previously managed; let SUPER-NEMO manage it/.test(q) ? "y" : "");
+    (q) => /Keep all these changed settings\?/.test(q) ? "n" : /not previously managed; let SUPER-NEMO manage it/.test(q) ? "y" : "");
   assert.equal(adopted.code, 0, adopted.out);
   assert.equal(YAML.parse(s.read("config.yml")).tools.approval.eval, "allow");
   assert.equal(s.manifest().config.keys["tools.approval.eval"].ours, "allow");
@@ -200,4 +196,96 @@ test("typing a name at the first question renames it", async (t) => {
   assert.match(out, /SUPER-JAKE is installed\./);
   assert.equal(s.manifest().choices.name, "jake");
   assert.match(s.read("AGENTS.md"), /called SUPER-JAKE/);
+});
+
+test("install defaults to keeping every changed setting, including a removed default and eval deny", async (t) => {
+  const s = sandbox(t);
+  assert.equal(s.sn(INSTALL).code, 0);
+  const doc = YAML.parseDocument(s.read("config.yml"));
+  doc.deleteIn(["modelRoles", "default"]);
+  doc.setIn(["tools", "approval", "eval"], "deny");
+  s.write("config.yml", doc.toString());
+  const keptConfig = s.read("config.yml");
+  const result = await underPty(`${SN} install`, { ...s.env, NO_COLOR: "1" },
+    (q) => /Run a quick live test/.test(q) ? "n" : "");
+  assert.equal(result.code, 0, result.out);
+  assert.equal(result.questions.filter((q) => /Keep all these changed settings\?/.test(q)).length, 1);
+  assert.ok(!result.questions.some((q) => /replace it with|let SUPER-NEMO manage it/.test(q)));
+  assert.equal(s.read("config.yml"), keptConfig);
+  assert.match(result.out, /Main model:.*kept it/);
+  assert.match(result.out, /Eval approval:.*kept it/);
+  assert.equal(Object.hasOwn(s.manifest().config.keys, "modelRoles.default"), false);
+  assert.equal(Object.hasOwn(s.manifest().config.keys, "tools.approval.eval"), false);
+});
+
+test("bulk keep can be declined to replace one setting while preserving another", async (t) => {
+  const s = sandbox(t);
+  assert.equal(s.sn(INSTALL).code, 0);
+  const doc = YAML.parseDocument(s.read("config.yml"));
+  doc.deleteIn(["modelRoles", "default"]);
+  doc.setIn(["tools", "approval", "eval"], "deny");
+  s.write("config.yml", doc.toString());
+  const result = await underPty(`${SN} install --reuse --no-smoke`, { ...s.env, NO_COLOR: "1" },
+    (q) => /Keep all these changed settings\?/.test(q) ? "n" : /Main model:.*replace it/.test(q) ? "y" : "");
+  assert.equal(result.code, 0, result.out);
+  assert.equal(result.questions.length, 3, result.questions.join("\n"));
+  const config = YAML.parse(s.read("config.yml"));
+  assert.equal(config.modelRoles.default, s.manifest().choices.impl);
+  assert.equal(config.tools.approval.eval, "deny");
+  assert.equal(Object.hasOwn(s.manifest().config.keys, "tools.approval.eval"), false);
+});
+
+test("cancelling at bulk keep or Apply never writes the proposed keep decision", async (t) => {
+  for (const stop of ["\x04", "\x03", "apply"]) {
+    const s = sandbox(t);
+    assert.equal(s.sn(INSTALL).code, 0);
+    const doc = YAML.parseDocument(s.read("config.yml"));
+    doc.setIn(["tools", "approval", "eval"], "deny");
+    s.write("config.yml", doc.toString());
+    const before = snapshot(s.home);
+    const result = await underPty(`${SN} install`, { ...s.env, NO_COLOR: "1" }, (q) => {
+      if (/Keep all these changed settings\?/.test(q) && stop !== "apply") return stop;
+      return /Apply\?/.test(q) ? "n" : "";
+    });
+    assert.equal(result.code, stop === "\x03" ? 130 : 1, result.out);
+    assert.deepEqual(snapshot(s.home), before);
+  }
+});
+
+test("--yes suppresses drift questions even on a terminal; explicit keep needs no questions", async (t) => {
+  const s = sandbox(t);
+  assert.equal(s.sn(INSTALL).code, 0);
+  const doc = YAML.parseDocument(s.read("config.yml"));
+  doc.setIn(["tools", "approval", "eval"], "deny");
+  s.write("config.yml", doc.toString());
+  const before = snapshot(s.home);
+  const refused = await underPty(`${SN} install --reuse --yes --no-smoke`, s.env, () => "");
+  assert.equal(refused.code, 3, refused.out);
+  assert.equal(refused.questions.length, 0);
+  assert.deepEqual(snapshot(s.home), before);
+  const kept = await underPty(`${SN} install --reuse --keep-settings --no-smoke`, s.env, () => "");
+  assert.equal(kept.code, 0, kept.out);
+  assert.equal(kept.questions.length, 0);
+  assert.equal(YAML.parse(s.read("config.yml")).tools.approval.eval, "deny");
+});
+
+test("the bulk default leaves legacy eval deny unmanaged without requesting adoption", async (t) => {
+  const s = sandbox(t);
+  assert.equal(s.sn(INSTALL).code, 0);
+  const doc = YAML.parseDocument(s.read("config.yml"));
+  doc.setIn(["tools", "approval", "eval"], "deny");
+  s.write("config.yml", doc.toString());
+  const legacy = s.manifest();
+  delete legacy.choices.evalApproval;
+  delete legacy.config.keys["tools.approval.eval"];
+  fs.writeFileSync(s.manifestPath, JSON.stringify(legacy));
+  const result = await underPty(`${SN} install --reuse --no-smoke`, { ...s.env, NO_COLOR: "1" }, () => "");
+  assert.equal(result.code, 0, result.out);
+  assert.equal(result.questions.length, 1, result.questions.join("\n"));
+  assert.match(result.questions[0], /Keep all these changed settings\?/);
+  assert.equal(YAML.parse(s.read("config.yml")).tools.approval.eval, "deny");
+  assert.equal(Object.hasOwn(s.manifest().config.keys, "tools.approval.eval"), false);
+  const removed = s.sn(["uninstall"]);
+  assert.equal(removed.code, 0, removed.out);
+  assert.equal(YAML.parse(s.read("config.yml")).tools.approval.eval, "deny");
 });

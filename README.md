@@ -25,7 +25,7 @@ curl -fsSL https://raw.githubusercontent.com/Glumac7/super-nemo/main/install.sh 
 
 The installer downloads SUPER-NEMO to `~/.super-nemo/repo`, suggests remote models for coding, advising, and review (not OMP's built-in Ollama, LM Studio, or llama.cpp providers by default), then asks before changing your OMP setup. It keeps model roles and the general approval mode you already selected; explicit local model flags still work. **A fresh setup defaults to YOLO:** OMP runs commands without asking, including commands that change files. Choose `--approval write` or `--approval always-ask` to retain command prompts. Separately, interactive install asks whether eval code may run without confirmation, default [Y/n]: yes enables `tools.approval.eval: allow`, no retains `prompt`. `sn install --yes` accepts the fresh allow default; use `--eval-approval prompt` for unattended installs that require confirmation. Reinstall preselects the saved choice; `--reuse` and `sn update` retain it, including legacy installations that previously managed `prompt`. To change an old prompt choice explicitly, use `--eval-approval allow`. Settings you changed yourself (including eval approval) are not silently replaced; use `--overwrite-drift` to replace them.
 
-If an older installation never managed eval approval, any existing value stays unmanaged unless you explicitly let SUPER-NEMO manage it—even if that value is already `prompt`. Interactive reinstall asks separately before adopting or replacing the value (default: leave it unmanaged); unattended reinstall requires both `--eval-approval allow|prompt` and `--overwrite-drift`. This protects a user-set `deny` from being silently weakened to `prompt`.
+If an older installation never managed eval approval, any existing value stays unmanaged unless you explicitly let SUPER-NEMO manage it—even if that value is already `prompt`. Keeping changed settings leaves that value unmanaged. To adopt or replace it interactively, decline the bulk keep question and explicitly accept the separate eval management question (default: leave it unmanaged). Without questions, adoption requires both `--eval-approval allow|prompt` and `--overwrite-drift` on `sn install`; `--overwrite-drift` alone does not consent to adopting unmanaged eval. This protects a user-set `deny` from being silently weakened to `prompt`.
 
 ## Use it
 
@@ -182,6 +182,30 @@ Launcher cleanup is not a security boundary against another process running as y
 For an installer-managed official GitHub checkout on `main`, interactive OMP sessions make a best-effort background check at most once every 24 hours and may show a notice when a newer commit is available. There are no checks in headless sessions, forks, manually cloned checkouts, or other branches. The notice uses the Git executable recorded at installation; if Git moves, rerun `~/.super-nemo/repo/sn install` from a clean checkout. The notice never installs anything: preview available commits anytime with `~/.super-nemo/repo/sn update --dry-run`, then install manually with `~/.super-nemo/repo/sn update`. Updates require a clean checkout with an upstream branch.
 
 Running the one-line installer again updates its managed checkout. `~/.super-nemo/repo/sn uninstall` asks before removing anything and keeps settings you changed yourself. Use `~/.super-nemo/repo/sn --help` for flags, including `--dry-run` to preview actions and `--profile` for a non-default OMP profile. If you cloned the repository yourself, run `./sn install` and `./sn update --dry-run` / `./sn update` from that checkout instead; these checkouts do not receive automatic notices.
+
+### Keep settings you changed
+
+When reinstalling or reapplying settings during update finds changed settings, it lists them and asks **“Keep all these changed settings? [Y/n]”**. Press Enter to preserve them all, including keys you deleted and edited settings that the new setup no longer needs. Answer no to use the existing per-setting replacement questions, each defaulting to keep. The installation summary lists the settings left alone.
+
+`sn update` reuses your recorded setup answers. With a terminal on both input and output, and without `--yes`, it can ask these drift questions only: it never asks about the name, models, setup confirmation, applying the plan, or running a live test. `sn install --reuse` likewise skips setup, apply, and live-test questions; pass `--no-smoke` to skip the live test itself. A normal interactive `sn install` still asks its setup, apply, and live-test questions.
+
+Changed settings go through the same keep/replace decision even when the checkout and installed revision are already current, including previously kept keys needed by the recorded setup and existing unmanaged eval approval. A healthy current installation with no pending settings decisions is only verified; its installation files are not rewritten. `--pull-only` skips settings reapplication and verification.
+
+For unattended use:
+
+```sh
+sn update --keep-settings
+sn install --reuse --keep-settings --no-smoke
+sn install --yes --keep-settings --no-smoke
+```
+
+`--keep-settings` skips drift questions and preserves every changed value, including unmanaged eval, without taking ownership of it. It does not suppress the other questions of a normal interactive install; use `--reuse` or `--yes` as shown above. Kept keys are left unmanaged, not recorded as new installer-owned values. Future reinstalls and updates require another keep/replace decision before managing those keys again; uninstall leaves them alone. Choosing to replace a previously kept key explicitly lets SUPER-NEMO manage it again.
+
+`--overwrite-drift` replaces changed settings instead; it is mutually exclusive with `--keep-settings`. Combining them exits 2 before installation work or update fetch. Unmanaged eval still needs the consent described above; for example, `sn install --reuse --yes --eval-approval prompt --overwrite-drift --no-smoke` explicitly adopts it as `prompt`.
+
+`--yes` suppresses all questions, including on update; it does **not** imply either keep or overwrite. Without a terminal (or with `--yes`), unresolved drift still exits 3: choose `--keep-settings`, explicitly choose replacement, or retry in a terminal without `--yes`. Update forwards `--yes`, `--keep-settings`, and `--overwrite-drift` to the reused install. If update already fast-forwarded but reapplication stopped, rerun it with the appropriate decision flag; the checkout is not rolled back.
+
+Install `--dry-run` shows the chosen keep/replace plan and summary without applying it. Update `--dry-run` only fetches and lists commits, without reapplying settings or asking drift questions. Cancelling an install question before application writes no installation changes; cancelling drift questions during update does not undo a fast-forward already performed.
 
 **Costs and safety:** Reviews and the optional live test make model calls, which can incur API charges. The fresh-install YOLO default removes OMP command approval prompts. If you accept eval auto-approval, it applies even with `--approval write` or `--approval always-ask`: eval can execute local code with access to your files and processes without asking first. Choose no at the eval question or pass `--eval-approval prompt` to require eval confirmation. Command deny rules are *not a sandbox*, and a project-level OMP config can replace them. Review commands and permissions before using this on a sensitive project. See the [workflow](skills/super-nemo/SKILL.md) for the full mode rules.
 
