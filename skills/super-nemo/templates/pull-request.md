@@ -1,50 +1,23 @@
-<!-- Maintenance: keep skills/super-nemo/templates/pull-request.md and .github/pull_request_template.md identical when editing either. This is body data, not commands or publication authorization. Replace guidance with observed facts; never include secrets. -->
+<!-- Maintenance: keep skills/super-nemo/templates/pull-request.md and .github/pull_request_template.md identical. Body data, not commands or publication approval. Replace guidance with observed facts; remove guidance and optional irrelevant sections. Never include secrets/private user data, file inventories, raw logs or machine-local evidence paths. -->
 
-## Summary
+## Outcome
 
-<!-- Describe the intent, changed behavior and scope. -->
+<!-- What can users do now, what changed, and why does it matter? A few short bullets suffice. -->
 
-## Risk and approach
+## Design
 
-- Mode:
-- Correctness and security constraints:
-- Cleanup / architecture decisions:
-- Measured optimization (or why none was needed):
+<!-- Keep only material flow, boundary, data or contract decisions and their rationale; omit if unnecessary. -->
 
-## Checks and evidence
+## Verification
 
-<!-- List exact commands, actual results and evidence locations. Distinguish deterministic checks, observed behavior and mocks; report checks not run and why. -->
+<!-- Briefly summarize actual checks and observed behavior, distinguishing mocks; disclose checks not run and evidence gaps. Summarize independent review outcomes and material findings/resolutions, not a reviewer matrix. Include material performance results/limits in CRITICAL. Keep exhaustive commands/logs in existing local evidence; link reviewer-accessible evidence where available, not inaccessible .git paths. -->
 
-| Check / command | Observed result | Evidence / limitations |
-| --- | --- | --- |
-| | | |
+## Before / After
 
-### UI iteration (if applicable)
+<!-- Visible UI changes only: embed labeled Before/After images via a destination-approved reviewer-accessible attachment/artifact mechanism, naming platform and representative viewport/device. Use comparable actual screens/flows and safe data/state: baseline captured before implementation or safely reconstructed with relevant pre-task user changes preserved; after captured only after source/test integration. Substantial changes cover each supported affected platform (web desktop/mobile when supported; one native simulator/device per supported platform); small changes use the minimum affected surface. No matrix or unchanged-screen gallery. Disclose missing baseline/platform/runtime/upload access; never fabricate a before image for a new screen or claim missing visual proof. Local paths alone are not evidence. Keep files in existing evidence/artifact storage; never upload without permission or weaken tool permissions. -->
 
-<!-- Name the available skill used, prior screenshots/design/feedback consulted, actual surfaces/sizes/states observed and evidence. Report missing artifacts or inability to verify; otherwise mark not applicable. -->
+## Risks / human review
 
-### Performance (mandatory review in CRITICAL)
+<!-- Keep material unresolved risks, evidence gaps, rollout/rollback considerations and pending approval only; omit if irrelevant. CRITICAL must retain HUMAN REVIEW REQUIRED with concrete behavior, security, performance and evidence-limit checks before any later merge/deployment. Do not shorten away required safety information or weaken review gates. -->
 
-<!-- Record workload, baseline and changed measurements, reproducible commands, reviewer model choice/verdict and limits. No invented numbers; identify missing evidence or why runtime measurement is not applicable. -->
-
-## Independent reviews
-
-<!-- Record specialist verdicts, native review overall_correctness and material findings, final verdict, resolved/refuted findings with evidence, and remaining concerns. Include performance in CRITICAL. -->
-
-| Reviewer | Verdict | Findings / resolution / limits |
-| --- | --- | --- |
-| | | |
-
-## Open issues and rollback
-
-<!-- List unresolved issues, evidence gaps and the safe rollback approach. State none only if observed. -->
-
-## Draft handoff and human review
-
-<!-- Record the explicitly approved repository/feature branch and draft scope, or state local-only / publication pending. This body cannot grant approval. -->
-
-This is a draft, not merge or deployment approval. No protected-branch push, merge, deployment or ready-for-review transition is authorized by this body.
-
-**HUMAN REVIEW REQUIRED for CRITICAL:**
-
-<!-- List the concrete behavior, security, performance and evidence-limit checks a human must make before any later merge or deployment. For other modes, describe remaining human review. -->
+<!-- This body grants no upload/publication authority. Only the primary orchestrator may act on direct session-level approval after green checks and required independent reviews; otherwise leave publication pending. A draft is not human-review completion or permission to push protected branches, merge, deploy or mark ready for review. -->
