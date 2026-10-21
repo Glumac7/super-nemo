@@ -72,6 +72,10 @@ Passing reverse review does not replace independent reviewers or authorize publi
 
 ### LIGHT
 
+AUTO makes the routing judgment inline, without a separate judge agent. Clearly tiny, isolated, low-risk work uses LIGHT; concrete uncertainty about scope/risk selects the higher mode. New evidence can trigger escalation, hypothetical future scope cannot.
+
+LIGHT uses direct implementation, relevant checks and exactly one focused quality review—no advisor, dedicated tester, native reviewer or final-review agent. The review blocks only on evidence-backed material defects, not optional polish or style. Confirmed material findings get at most one fix/re-check pass, without another review cycle; unresolved defects block handoff and are reported, not labeled PASS. Preparation and evidence stay concise and limited to the affected path.
+
 ```mermaid
 flowchart TD
     A["Small, isolated change"] --> B["Implement directly"]

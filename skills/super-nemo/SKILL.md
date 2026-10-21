@@ -19,7 +19,7 @@ An explicit mode wins. For `super-nemo:` or an unprefixed engineering request (A
 - **LIGHT** — tiny fix, UI tweak, small test, trivial refactor; isolated and low-risk.
 - **NORMAL** — everything else (features, business logic, APIs, meaningful refactors, bug fixes).
 
-Between two modes, pick the higher. State the mode and a one-line reason. The chosen mode alone decides the native review gate and test author (§3): LIGHT has neither; NORMAL and CRITICAL always require both, including automatically routed requests.
+Make the routing judgment inline from the request and a bounded inspection of the affected code; do not spawn a separate judge or review agent just to select a mode. Choose LIGHT when the change is clearly tiny, isolated and low-risk; do not inflate it because of hypothetical future scope. Between two modes when concrete scope or risk remains uncertain, pick the higher. State the mode and a one-line reason, not a lengthy routing analysis. Re-route only when inspection or implementation reveals concrete scope/risk that exceeds the chosen mode. The chosen mode alone decides the native review gate and test author (§3): LIGHT has neither; NORMAL and CRITICAL always require both, including automatically routed requests.
 
 ## 2. Prepare (all modes)
 
@@ -107,10 +107,11 @@ The mode selects the implementer, and the implementer's definition attaches the 
 - Before forwarding a material finding, read the cited code and confirm it; record refuted findings with the reason instead of fixing them.
 - Confirmed findings join the fix loop like `FIX_REQUIRED`. It is an additional gate: never skip or replace a specialist because `reviewer` passed.
 
-**LIGHT** — explicit tiny-change exception: no swarm, no advisor, no dedicated tester, no native review gate. If the work turns out bigger or riskier than LIGHT, stop and re-route upward.
-1. Implement it yourself, including any necessary tests.
-2. Checks → `checks.md`.
-3. One `nemo-quality` review. Fix `FIX_REQUIRED` findings once, re-check.
+**LIGHT** — explicit tiny-change exception: no swarm, no advisor, no dedicated tester, no native or final review gate. If concrete evidence shows the work is bigger or riskier than LIGHT, stop and re-route upward.
+1. Implement the smallest sound change yourself, including any necessary tests. Keep preparation/evidence concise; inspect the affected path and direct dependencies, not unrelated subsystems.
+2. Run relevant checks and exercise changed behavior; for documentation-only changes, inspect the instructions directly. Record actual results in `checks.md`; do not add unrelated check matrices or rerun unchanged green checks.
+3. Dispatch exactly one `nemo-quality` review with the scope contract, diff and check evidence, explicitly identifying LIGHT. Review the changed path and only the surrounding code needed to establish a concrete defect; do not launch additional reviewers or a separate judging pass.
+4. Only evidence-backed material defects require correction: incorrect behavior, a security risk, a broken contract, unauthorized scope, or unnecessary complexity with a concrete maintenance cost. Optional polish and stylistic preferences are non-blocking. On `FIX_REQUIRED`, fix confirmed material findings once and re-run affected checks; do not start another review cycle. If a material finding remains unresolved, report it as unresolved and block handoff rather than claiming PASS. Otherwise report the review verdict, corrections and check results; stop.
 
 **NORMAL**
 1. Plan: add a short spec to `task.md` (approach, production files, tests and ownership).

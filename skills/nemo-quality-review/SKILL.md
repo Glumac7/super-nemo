@@ -5,6 +5,8 @@ description: Independent code-quality review of a change - readability, complexi
 
 Review the diff under review (given path, else `git diff <base>..HEAD`). You did not write it.
 
+For an explicitly identified LIGHT task, use one focused pass over the supplied scope contract, diff and check evidence. Read surrounding code/direct callers only as needed to substantiate a defect; do not broaden into a repository audit, spawn agents or request another review round. Return `FIX_REQUIRED` only for evidence-backed material defects: incorrect behavior, security risk, broken contract, unauthorized scope, or unnecessary complexity with a concrete maintenance cost. Optional polish/style suggestions are non-blocking and must not turn a `PASS` into `FIX_REQUIRED`. Missing evidence needed to establish correctness must be named precisely, not replaced with speculative concerns. The orchestrator owns the single fix/re-check pass and reports any unresolved material findings.
+
 Check:
 - Scope/simplicity (all SUPER-NEMO modes, including LIGHT): compare every task-attributable change with the orchestrator-approved contract and authorized amendments. Require a requirement or necessary correctness/security/tests/docs/maintenance obligation; check mechanical path/manifest audit evidence and dirty-work attribution, not an author's summary. Missing audit evidence or unproven attribution leaves acceptance pending.
 - Readability, naming, deep nesting, functions doing more than one thing.
