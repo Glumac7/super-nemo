@@ -15,6 +15,8 @@ SUPER-NEMO is a risk-routed coding workflow for [Oh My Pi](https://github.com/ca
 
 Installation links this workflow into your OMP configuration and sets up model roles; the actual code changes happen in whichever Git repository you open with OMP. Reviewers inspect the change; they do not replace your approval or a security sandbox.
 
+Research: [UHP fit and adoption recommendation](UHP-RESEARCH.md) (ENG-35; no runtime integration).
+
 ## Install
 
 You need `omp` 18.3.0+ (signed in with `omp login` for the model providers you use), git, and Node.js 20+.
