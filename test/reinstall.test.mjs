@@ -187,3 +187,108 @@ test("links into another checkout are conflicts, not ours", (t) => {
   assert.match(res.out, /skills\/super-nemo already exists \(symlink to .*old-super-nemo/);
   assert.deepEqual(snapshot(s.home), before);
 });
+
+test("unattended install keep preserves removed keys and eval edits through reuse and uninstall", (t) => {
+  const s = sandbox(t);
+  assert.equal(s.sn(INSTALL).code, 0);
+  setIn(s, (doc) => {
+    doc.deleteIn(["modelRoles", "default"]);
+    doc.setIn(["tools", "approval", "eval"], "deny");
+  });
+  const before = snapshot(s.home);
+  const refused = s.sn(["install", "--reuse", "--no-smoke"]);
+  assert.equal(refused.code, 3, refused.out);
+  assert.match(refused.out, /--keep-settings/);
+  assert.match(refused.out, /--overwrite-drift/);
+  assert.deepEqual(snapshot(s.home), before);
+  for (const args of [[...INSTALL, "--keep-settings"], ["install", "--reuse", "--keep-settings", "--no-smoke"]]) {
+    const result = s.sn(args);
+    assert.equal(result.code, 0, result.out);
+    const config = YAML.parse(s.read("config.yml"));
+    assert.equal(Object.hasOwn(config.modelRoles, "default"), false);
+    assert.equal(config.tools.approval.eval, "deny");
+    assert.equal(Object.hasOwn(s.manifest().config.keys, "modelRoles.default"), false);
+    assert.equal(Object.hasOwn(s.manifest().config.keys, "tools.approval.eval"), false);
+  }
+  const removed = s.sn(["uninstall"]);
+  assert.equal(removed.code, 0, removed.out);
+  const config = YAML.parse(s.read("config.yml"));
+  assert.equal(Object.hasOwn(config.modelRoles ?? {}, "default"), false);
+  assert.equal(config.tools.approval.eval, "deny");
+  assert.equal(fs.existsSync(s.manifestPath), false);
+});
+
+test("keep dry run does not record ownership changes and contradictory install flags write nothing", (t) => {
+  const s = sandbox(t);
+  assert.equal(s.sn(INSTALL).code, 0);
+  setIn(s, (doc) => {
+    doc.deleteIn(["modelRoles", "default"]);
+    doc.setIn(["tools", "approval", "eval"], "deny");
+  });
+  const before = snapshot(s.home);
+  const dry = s.sn([...INSTALL, "--keep-settings", "--dry-run"]);
+  assert.equal(dry.code, 0, dry.out);
+  assert.match(dry.out, /Main model:.*kept it/);
+  assert.match(dry.out, /Eval approval:.*kept it/);
+  assert.deepEqual(snapshot(s.home), before);
+  const contradictory = s.sn([...INSTALL, "--keep-settings", "--overwrite-drift"]);
+  assert.equal(contradictory.code, 2, contradictory.out);
+  assert.deepEqual(snapshot(s.home), before);
+});
+
+test("keeping legacy unowned eval deny never grants consent or ownership on unattended reuse", (t) => {
+  const s = sandbox(t);
+  assert.equal(s.sn(INSTALL).code, 0);
+  setIn(s, (doc) => doc.setIn(["tools", "approval", "eval"], "deny"));
+  const legacy = s.manifest();
+  delete legacy.choices.evalApproval;
+  delete legacy.config.keys["tools.approval.eval"];
+  fs.writeFileSync(s.manifestPath, JSON.stringify(legacy));
+  for (const args of [[...INSTALL, "--keep-settings", "--eval-approval", "allow"],
+    ["install", "--reuse", "--keep-settings", "--no-smoke"]]) {
+    const kept = s.sn(args);
+    assert.equal(kept.code, 0, kept.out);
+    assert.equal(YAML.parse(s.read("config.yml")).tools.approval.eval, "deny");
+    assert.equal(Object.hasOwn(s.manifest().config.keys, "tools.approval.eval"), false);
+  }
+  const before = snapshot(s.home);
+  const refused = s.sn(["install", "--reuse", "--overwrite-drift", "--no-smoke"]);
+  assert.equal(refused.code, 3, refused.out);
+  assert.deepEqual(snapshot(s.home), before);
+  const removed = s.sn(["uninstall"]);
+  assert.equal(removed.code, 0, removed.out);
+  assert.equal(YAML.parse(s.read("config.yml")).tools.approval.eval, "deny");
+});
+
+test("uninstall never restores an old whole-file backup over settings kept on reinstall", (t) => {
+  const s = sandbox(t);
+  s.write("config.yml", [
+    "# existing user configuration",
+    "theme: midnight",
+    "modelRoles:",
+    "  default: beta/sol:medium",
+    "tools:",
+    "  approval:",
+    "    eval: prompt",
+    "",
+  ].join("\n"));
+  assert.equal(s.sn(INSTALL).code, 0);
+  assert.ok(s.manifest().files.config.backup, "fixture must have a previous-file backup");
+  setIn(s, (doc) => {
+    doc.deleteIn(["modelRoles", "default"]);
+    doc.setIn(["tools", "approval", "eval"], "deny");
+  });
+  const kept = s.sn(["install", "--reuse", "--keep-settings", "--no-smoke"]);
+  assert.equal(kept.code, 0, kept.out);
+  const reapplied = s.sn(["install", "--reuse", "--keep-settings", "--no-smoke", "--approval", "always-ask"]);
+  assert.equal(reapplied.code, 0, reapplied.out);
+  const removed = s.sn(["uninstall"]);
+  assert.equal(removed.code, 0, removed.out);
+  const config = YAML.parse(s.read("config.yml"));
+  assert.equal(Object.hasOwn(config.modelRoles ?? {}, "default"), false);
+  assert.equal(config.tools.approval.eval, "deny");
+  assert.equal(config.tools.approvalMode, undefined);
+  assert.equal(config.theme, "midnight");
+  assert.equal(config.bash, undefined);
+  assert.equal(config.task, undefined);
+});
