@@ -43,6 +43,76 @@ test("update fast-forwards, re-applies the recorded answers and reports the chan
   assert.deepEqual(s.manifest().choices, { name: "jake", impl: "alpha/big:high", fast: "alpha/small:low", advisor: null, advisorCritical: null, review: "beta/sol:high", approval: "always-ask", evalApproval: "prompt" });
 });
 
+test("update adds performance routing to a legacy unowned install and uninstall removes only the new mapping", async (t) => {
+  const { s, r } = await installed(t);
+  // Model the previous installer's state: neither config nor manifest owned this key.
+  const doc = YAML.parseDocument(s.read("config.yml"));
+  doc.deleteIn(["task", "agentModelOverrides", "nemo-performance"]);
+  doc.setIn(["task", "agentModelOverrides", "personal-agent"], "@nemo-fast");
+  s.write("config.yml", doc.toString());
+  const legacy = s.manifest();
+  delete legacy.config.keys["task.agentModelOverrides.nemo-performance"];
+  fs.writeFileSync(s.manifestPath, JSON.stringify(legacy));
+  r.commit("add a skill", addSkill("nemo-extra"));
+  const updated = s.update();
+  assert.equal(updated.code, 0, updated.out);
+  const config = YAML.parse(s.read("config.yml"));
+  const alias = config.task.agentModelOverrides["nemo-performance"];
+  assert.match(alias, /^@/);
+  const selector = config.modelRoles[alias.slice(1)];
+  assert.equal(selector, legacy.choices.review);
+  const [model, thinking] = selector.split(":");
+  const models = JSON.parse(fs.readFileSync(path.join(s.clone, "test", "fixtures", "models.json"), "utf8")).models;
+  const available = models.find((entry) => entry.selector === model);
+  assert.ok(available, `unresolved performance model ${selector}`);
+  if (thinking) assert.ok(available.thinking?.includes(thinking));
+  assert.equal(config.task.agentModelOverrides["personal-agent"], "@nemo-fast");
+  const removed = s.run(path.join(s.clone, "sn"), ["uninstall"]);
+  assert.equal(removed.code, 0, removed.out);
+  const restored = YAML.parse(s.read("config.yml"));
+  assert.equal(restored.task.agentModelOverrides["nemo-performance"], undefined);
+  assert.equal(restored.task.agentModelOverrides["personal-agent"], "@nemo-fast");
+});
+
+for (const decision of ["--keep-settings", "--overwrite-drift"]) {
+  test(`legacy custom performance selection requires consent and honors ${decision} across reapply and uninstall`, async (t) => {
+    const { s, r } = await installed(t);
+    const key = "task.agentModelOverrides.nemo-performance";
+    const doc = YAML.parseDocument(s.read("config.yml"));
+    doc.setIn(["task", "agentModelOverrides", "nemo-performance"], "alpha/plain");
+    s.write("config.yml", doc.toString());
+    const legacy = s.manifest();
+    delete legacy.config.keys[key];
+    fs.writeFileSync(s.manifestPath, JSON.stringify(legacy));
+    const before = snapshot(s.agentDir);
+    const beforeManifest = fs.readFileSync(s.manifestPath, "utf8");
+    r.commit("upgrade legacy install", addSkill("nemo-extra"));
+    const refused = s.update(["--yes"]);
+    assert.equal(refused.code, 3, refused.out);
+    assert.deepEqual(snapshot(s.agentDir), before);
+    assert.equal(fs.readFileSync(s.manifestPath, "utf8"), beforeManifest);
+    const resolved = s.update([decision]);
+    assert.equal(resolved.code, 0, resolved.out);
+    if (decision === "--keep-settings") {
+      assert.equal(YAML.parse(s.read("config.yml")).task.agentModelOverrides["nemo-performance"], "alpha/plain");
+      assert.equal(Object.hasOwn(s.manifest().config.keys, key), false);
+      const reapplied = s.run(path.join(s.clone, "sn"), ["install", "--reuse", "--no-smoke", "--keep-settings"]);
+      assert.equal(reapplied.code, 0, reapplied.out);
+      assert.equal(YAML.parse(s.read("config.yml")).task.agentModelOverrides["nemo-performance"], "alpha/plain");
+      assert.equal(Object.hasOwn(s.manifest().config.keys, key), false);
+    } else {
+      const config = YAML.parse(s.read("config.yml"));
+      const alias = config.task.agentModelOverrides["nemo-performance"];
+      assert.match(alias, /^@/);
+      assert.equal(config.modelRoles[alias.slice(1)], legacy.choices.review);
+      assert.deepEqual(s.manifest().config.keys[key].prior, { value: "alpha/plain" });
+    }
+    const removed = s.run(path.join(s.clone, "sn"), ["uninstall"]);
+    assert.equal(removed.code, 0, removed.out);
+    assert.equal(YAML.parse(s.read("config.yml")).task.agentModelOverrides["nemo-performance"], "alpha/plain");
+  });
+}
+
 test("update retains legacy manifest-owned eval prompt without recorded consent", async (t) => {
   const { s, r } = await installed(t);
   const legacy = s.manifest();

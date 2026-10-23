@@ -4,7 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
-import { REPO } from "./helpers.mjs";
+import { MODELS, REPO } from "./helpers.mjs";
 
 function smokeRepo(t, { change = true, passing = true } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "sn-smoke-"));
@@ -25,8 +25,8 @@ function smokeRepo(t, { change = true, passing = true } = {}) {
 }
 
 const { NODE_TEST_CONTEXT, ...cleanEnv } = process.env;
-const assertRun = (mode, sessions, dir, expectedModel) =>
-  spawnSync("node", [path.join(REPO, "evals", "assert-run.mjs"), mode, sessions, dir, ...(expectedModel === undefined ? [] : [expectedModel])], { encoding: "utf8", env: cleanEnv });
+const assertRun = (mode, sessions, dir, evidencePath) =>
+  spawnSync("node", [path.join(REPO, "evals", "assert-run.mjs"), mode, sessions, dir, ...(evidencePath === undefined ? [] : [evidencePath])], { encoding: "utf8", env: cleanEnv });
 
 const taskCall = (...agents) => ({
   type: "message",
@@ -38,9 +38,21 @@ function writeSession(file, header, entries) {
   fs.writeFileSync(file, [{ type: "title", v: 1 }, { type: "session", ...header }, ...entries].map((e) => JSON.stringify(e)).join("\n"));
 }
 
-function run(mode, { dir, sessions }, calls, expectedModel) {
+function performanceEvidence(dir) {
+  return {
+    cwd: fs.realpathSync(dir),
+    modelRoles: { "advisor-critical": "alpha/big:high", "nemo-review": "beta/sol:high" },
+    agentModelOverrides: { "nemo-performance": "@advisor-critical" },
+    agentAdvisor: {},
+    models: JSON.parse(fs.readFileSync(MODELS, "utf8")).models,
+  };
+}
+
+function run(mode, { dir, sessions }, calls, evidence = performanceEvidence(dir)) {
   writeSession(path.join(sessions, "main.jsonl"), { cwd: dir }, calls);
-  const res = assertRun(mode, sessions, dir, expectedModel);
+  const evidencePath = path.join(sessions, "performance.json");
+  fs.writeFileSync(evidencePath, JSON.stringify(evidence));
+  const res = assertRun(mode, sessions, dir, mode === "critical" ? evidencePath : undefined);
   return { code: res.status, out: res.stdout + res.stderr };
 }
 
@@ -61,8 +73,7 @@ test("light fails when an implementer was spawned", (t) => {
 for (const mode of ["normal", "critical", "auto", "implicit"]) {
   const implementer = mode === "critical" ? "nemo-implementer-critical" : "nemo-implementer";
   const reviewers = ["nemo-architect", "nemo-quality", "nemo-qa", "reviewer"];
-  const expectedModel = mode === "critical" ? "@advisor-critical" : undefined;
-  if (mode === "critical") reviewers.push("nemo-security", { agent: "nemo-performance", model: expectedModel });
+  if (mode === "critical") reviewers.push("nemo-security", "nemo-performance");
 
   test(`${mode} passes with a tester and the complete workflow`, (t) => {
     const res = run(mode, smokeRepo(t), [
@@ -70,7 +81,7 @@ for (const mode of ["normal", "critical", "auto", "implicit"]) {
       taskCall("nemo-tester"),
       taskCall(...reviewers),
       taskCall("nemo-final-review"),
-    ], expectedModel);
+    ]);
     assert.equal(res.code, 0, res.out);
     assert.match(res.out, /smoke: PASS/);
   });
@@ -80,7 +91,7 @@ for (const mode of ["normal", "critical", "auto", "implicit"]) {
       taskCall(implementer),
       taskCall(...reviewers),
       taskCall("nemo-final-review"),
-    ], expectedModel);
+    ]);
     assert.equal(res.code, 1, res.out);
     assert.match(res.out, /missing agent nemo-tester/);
     assert.match(res.out, /smoke: FAIL/);
@@ -115,7 +126,7 @@ for (const mode of ["normal", "critical", "auto", "implicit"]) {
     },
   ]) {
     test(`${mode} rejects ${name}`, (t) => {
-      const res = run(mode, smokeRepo(t), calls, expectedModel);
+      const res = run(mode, smokeRepo(t), calls);
       assert.equal(res.code, 1, res.out);
       assert.match(res.out, diagnostic);
       assert.match(res.out, /smoke: FAIL/);
@@ -156,80 +167,131 @@ test("critical requires performance review in the main session", (t) => {
     taskCall("nemo-architect", "nemo-security", "nemo-quality", "nemo-qa", "reviewer"),
     taskCall("nemo-final-review"),
   ];
-  const missing = run("critical", r, calls, "@advisor-critical");
+  const missing = run("critical", r, calls);
   assert.equal(missing.code, 1);
   assert.match(missing.out, /missing agent nemo-performance/);
 
-  writeSession(path.join(r.sessions, "main", "Impl.jsonl"), { cwd: r.dir, parentSession: "main.jsonl" }, [taskCall({ agent: "nemo-performance", model: "@advisor-critical" })]);
-  const subagentOnly = run("critical", r, calls, "@advisor-critical");
+  writeSession(path.join(r.sessions, "main", "Impl.jsonl"), { cwd: r.dir, parentSession: "main.jsonl" }, [taskCall("nemo-performance")]);
+  const subagentOnly = run("critical", r, calls);
   assert.equal(subagentOnly.code, 1);
   assert.match(subagentOnly.out, /missing agent nemo-performance/);
 
   const ok = run("critical", r, [
     calls[0],
     calls[1],
-    criticalBatch("@advisor-critical"),
+    criticalBatch(),
     calls[3],
-  ], "@advisor-critical");
+  ]);
   assert.equal(ok.code, 0, ok.out);
   assert.match(ok.out, /smoke: PASS/);
 });
 
-function criticalBatch(model) {
-  return taskCall("nemo-architect", "nemo-security", "nemo-quality", "nemo-qa",
-    { agent: "nemo-performance", ...(model === undefined ? {} : { model }) }, "reviewer");
+function criticalBatch() {
+  return taskCall("nemo-architect", "nemo-security", "nemo-quality", "nemo-qa", "nemo-performance", "reviewer");
 }
 
 test("critical rejects performance dispatched separately or after final review", (t) => {
   const r = smokeRepo(t);
   const review = taskCall("nemo-architect", "nemo-security", "nemo-quality", "nemo-qa", "reviewer");
-  const performance = taskCall({ agent: "nemo-performance", model: "@advisor-critical" });
+  const performance = taskCall("nemo-performance");
   const impl = taskCall("nemo-implementer-critical");
   const tester = taskCall("nemo-tester");
   const final = taskCall("nemo-final-review");
   for (const calls of [
     [impl, tester, review, performance, final],
     [impl, tester, review, final, performance],
-    [impl, tester, final, criticalBatch("@advisor-critical")],
-    [impl, tester, final, criticalBatch("@advisor-critical"), final],
+    [impl, tester, final, criticalBatch()],
+    [impl, tester, final, criticalBatch(), final],
   ]) {
-    const res = run("critical", r, calls, "@advisor-critical");
+    const res = run("critical", r, calls);
     assert.equal(res.code, 1, res.out);
     assert.match(res.out, /full critical review batch before nemo-final-review/);
   }
   const preplan = run("critical", r, [
-    taskCall("nemo-architect"), impl, tester, criticalBatch("@advisor-critical"), final,
-  ], "@advisor-critical");
+    taskCall("nemo-architect"), impl, tester, criticalBatch(), final,
+  ]);
   assert.equal(preplan.code, 0, preplan.out);
 });
 
-test("critical requires the expected explicit performance model override", (t) => {
+const criticalCalls = () => [
+  taskCall("nemo-implementer-critical"), taskCall("nemo-tester"), criticalBatch(), taskCall("nemo-final-review"),
+];
+
+test("ordinary per-call models are rejected even with usable native performance selection", (t) => {
   const r = smokeRepo(t);
-  for (const model of [undefined, "@default", "@nemo-review"]) {
-    const res = run("critical", r, [
-      taskCall("nemo-implementer-critical"), taskCall("nemo-tester"), criticalBatch(model), taskCall("nemo-final-review"),
-    ], "@advisor-critical");
+  for (const agent of ["nemo-performance", "nemo-tester", "nemo-implementer-critical"]) {
+    const calls = criticalCalls();
+    for (const call of calls) {
+      for (const task of call.message.content[0].arguments.tasks) {
+        if (task.agent === agent) task.model = "@advisor-critical";
+      }
+    }
+    const res = run("critical", r, calls);
     assert.equal(res.code, 1, res.out);
-    assert.match(res.out, /nemo-performance requires explicit model @advisor-critical/);
   }
 });
 
-test("critical requires an allowed model expectation and supports explicit reviewer fallback", (t) => {
+for (const override of ["@advisor-critical", "@custom", "alpha/big:high", "@custom:high"]) {
+  test(`critical accepts equivalent native performance selection ${override}`, (t) => {
+    const r = smokeRepo(t);
+    const evidence = performanceEvidence(r.dir);
+    evidence.modelRoles.custom = override === "@custom:high" ? "alpha/big:medium" : "alpha/big:high";
+    evidence.agentModelOverrides["nemo-performance"] = override;
+    const res = run("critical", r, criticalCalls(), evidence);
+    assert.equal(res.code, 0, res.out);
+  });
+}
+
+test("critical rejects missing, weaker, unavailable and thinking-mismatched native selection", (t) => {
   const r = smokeRepo(t);
-  const calls = [taskCall("nemo-implementer-critical"), taskCall("nemo-tester"), criticalBatch("@nemo-review"), taskCall("nemo-final-review")];
-  for (const expected of [undefined, "@default", ""]) {
-    const res = run("critical", r, calls, expected);
-    assert.equal(res.code, 2, res.out);
-    assert.match(res.out, /expected-performance-model/);
+  for (const mutate of [
+    (e) => { delete e.agentModelOverrides["nemo-performance"]; },
+    (e) => { e.agentModelOverrides["nemo-performance"] = "@nemo-review"; },
+    (e) => { e.agentModelOverrides["nemo-performance"] = "alpha/big:medium"; },
+    (e) => { e.agentModelOverrides["nemo-performance"] = "@missing"; },
+    (e) => { e.modelRoles["advisor-critical"] = "absent/model:high"; },
+    (e) => { e.modelRoles["advisor-critical"] = "alpha/big:impossible"; },
+    (e) => { e.modelRoles.custom = "alpha/plain"; e.agentModelOverrides["nemo-performance"] = "@custom:high"; },
+  ]) {
+    const evidence = performanceEvidence(r.dir);
+    mutate(evidence);
+    const res = run("critical", r, criticalCalls(), evidence);
+    assert.equal(res.code, 1, res.out);
   }
-  const ok = run("critical", r, calls, "@nemo-review");
-  assert.equal(ok.code, 0, ok.out);
-  assert.match(ok.out, /smoke: PASS/);
-  const missing = run("critical", r, [
-    calls[0], calls[1], criticalBatch(), calls[3],
-  ], "@nemo-review");
-  assert.equal(missing.code, 1, missing.out);
-  assert.match(missing.out, /nemo-performance requires explicit model @nemo-review/);
+});
+
+test("reviewer fallback requires both implementer advisors off and no advisor roles", (t) => {
+  const r = smokeRepo(t);
+  const fallback = performanceEvidence(r.dir);
+  delete fallback.modelRoles["advisor-critical"];
+  fallback.agentAdvisor = { "nemo-implementer": "off", "nemo-implementer-critical": "off" };
+  fallback.agentModelOverrides["nemo-performance"] = "@nemo-review";
+  assert.equal(run("critical", r, criticalCalls(), fallback).code, 0);
+  for (const mutate of [
+    (e) => { delete e.agentAdvisor["nemo-implementer"]; },
+    (e) => { e.agentAdvisor["nemo-implementer-critical"] = "on"; },
+    (e) => { e.modelRoles.advisor = "alpha/big:medium"; },
+    (e) => { e.modelRoles["advisor-critical"] = ""; },
+  ]) {
+    const evidence = structuredClone(fallback);
+    mutate(evidence);
+    const res = run("critical", r, criticalCalls(), evidence);
+    assert.equal(res.code, 1, res.out);
+  }
+});
+
+test("critical requires well-formed evidence for this repository", (t) => {
+  const r = smokeRepo(t);
+  writeSession(path.join(r.sessions, "main.jsonl"), { cwd: r.dir }, criticalCalls());
+  assert.equal(assertRun("critical", r.sessions, r.dir).status, 2);
+  const evidencePath = path.join(r.sessions, "invalid.json");
+  for (const text of ["not json", "null", "[]", JSON.stringify({ ...performanceEvidence(r.dir), cwd: r.sessions }),
+    JSON.stringify({ ...performanceEvidence(r.dir), models: null }),
+    JSON.stringify({ ...performanceEvidence(r.dir), agentAdvisor: [] })]) {
+    fs.writeFileSync(evidencePath, text);
+    const res = assertRun("critical", r.sessions, r.dir, evidencePath);
+    assert.equal(res.status, 1, res.stdout + res.stderr);
+  }
 });
 
 test("an empty diff or failing tests fail the run", (t) => {
@@ -249,7 +311,7 @@ test("a session for another directory is not taken as the main session", (t) => 
   assert.match(res.stdout, /expected exactly one main session/);
 });
 
-function smokeScript(t, roles, { model = "@advisor-critical", configStatus = 0, mode = "critical" } = {}) {
+function smokeScript(t, records, { configStatus = 0, mode = "critical", capture = false } = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "sn-smoke-tools-"));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const log = path.join(root, "calls.jsonl");
@@ -259,9 +321,13 @@ const path = require("node:path");
 const args = process.argv.slice(2);
 fs.appendFileSync(process.env.SMOKE_CALLS, JSON.stringify(args) + "\\n");
 if (args[0] === "config") {
-  if (JSON.stringify(args) !== JSON.stringify(["config", "get", "modelRoles", "--json"])) process.exit(3);
-  process.stdout.write(process.env.SMOKE_ROLES);
+  const records = JSON.parse(process.env.SMOKE_RECORDS);
+  process.stdout.write(records[args[2]]);
   process.exit(Number(process.env.SMOKE_CONFIG_STATUS));
+}
+if (args[0] === "models") {
+  process.stdout.write(process.env.SMOKE_CATALOG);
+  process.exit(0);
 }
 if (args[0] !== "-p") process.exit(4);
 const sessions = args[args.indexOf("--session-dir") + 1];
@@ -272,8 +338,7 @@ const agent = (name) => ({ agent: name });
 const entries = process.env.SMOKE_MODE === "critical" ? [
   call([agent("nemo-implementer-critical")]),
   call([agent("nemo-tester")]),
-  call(["nemo-architect", "nemo-security", "nemo-quality", "nemo-qa", "reviewer"].map(agent).concat(
-    { agent: "nemo-performance", model: process.env.SMOKE_MODEL })),
+  call(["nemo-architect", "nemo-security", "nemo-quality", "nemo-qa", "reviewer", "nemo-performance"].map(agent)),
   call([agent("nemo-final-review")]),
 ] : [call([agent("nemo-quality")])];
 fs.writeFileSync(path.join(sessions, "main.jsonl"), [
@@ -281,65 +346,93 @@ fs.writeFileSync(path.join(sessions, "main.jsonl"), [
 ].map((entry) => JSON.stringify(entry)).join("\\n"));
 fs.appendFileSync("math.js", "export const sub = (a, b) => a - b;\\n");
 `, { mode: 0o755 });
-  const res = spawnSync("bash", [path.join(REPO, "evals", "smoke.sh"), mode], {
-    encoding: "utf8",
+  const evidencePath = path.join(root, "performance.json");
+  const args = capture
+    ? [path.join(REPO, "evals", "assert-run.mjs"), "--capture-performance", evidencePath]
+    : [path.join(REPO, "evals", "smoke.sh"), mode];
+  const res = spawnSync(capture ? process.execPath : "bash", args, {
+    encoding: "utf8", cwd: root,
     env: {
       ...cleanEnv, PATH: `${root}${path.delimiter}${cleanEnv.PATH}`,
-      SMOKE_CALLS: log, SMOKE_ROLES: roles, SMOKE_MODEL: model,
+      SMOKE_CALLS: log, SMOKE_RECORDS: JSON.stringify(records), SMOKE_CATALOG: fs.readFileSync(MODELS, "utf8"),
       SMOKE_CONFIG_STATUS: String(configStatus), SMOKE_MODE: mode,
     },
   });
   return {
     code: res.status, out: res.stdout + res.stderr,
     calls: fs.existsSync(log) ? fs.readFileSync(log, "utf8").trim().split("\n").map((line) => JSON.parse(line)) : [],
+    evidence: fs.existsSync(evidencePath) ? JSON.parse(fs.readFileSync(evidencePath, "utf8")) : undefined,
+    cwd: fs.realpathSync(root),
   };
 }
 
-test("critical smoke queries the parent role record and passes the configured critical expectation", (t) => {
-  const roles = JSON.stringify({ key: "modelRoles", value: { "advisor-critical": "alpha/big:high", "nemo-review": "beta/sol:high" } });
-  const ok = smokeScript(t, roles);
+function configRecords() {
+  const e = performanceEvidence(os.tmpdir());
+  return Object.fromEntries([
+    ["modelRoles", e.modelRoles], ["task.agentModelOverrides", e.agentModelOverrides], ["task.agentAdvisor", e.agentAdvisor],
+  ].map(([key, value]) => [key, JSON.stringify({ key, value })]));
+}
+
+test("critical smoke captures native selection then evaluates a workflow without per-call models", (t) => {
+  const ok = smokeScript(t, configRecords());
   assert.equal(ok.code, 0, ok.out);
-  assert.deepEqual(ok.calls[0], ["config", "get", "modelRoles", "--json"]);
-  assert.match(ok.out, /smoke: PASS/);
-  const wrong = smokeScript(t, roles, { model: "@nemo-review" });
-  assert.equal(wrong.code, 1, wrong.out);
-  assert.match(wrong.out, /nemo-performance requires explicit model @advisor-critical/);
+  assert.ok(ok.calls.some((args) => args[0] === "models"));
+  assert.ok(ok.calls.some((args) => args[0] === "-p"));
 });
 
-test("critical smoke explicitly selects the configured advisor-disabled reviewer fallback", (t) => {
-  const ok = smokeScript(t, JSON.stringify({ key: "modelRoles", value: { "nemo-review": "beta/sol:high" } }), { model: "@nemo-review" });
-  assert.equal(ok.code, 0, ok.out);
-  assert.match(ok.out, /explicit advisor-disabled fallback to @nemo-review/);
-  assert.match(ok.out, /smoke: PASS/);
+test("capture accepts an omitted advisor-record value and retains only selection evidence", (t) => {
+  const records = configRecords();
+  records["task.agentAdvisor"] = JSON.stringify({ key: "task.agentAdvisor" });
+  records.modelRoles = JSON.stringify({ key: "modelRoles", value: {
+    "advisor-critical": "alpha/big:high", "nemo-review": "beta/sol:high", custom: "alpha/big:high", unrelated: "alpha/plain",
+  } });
+  records["task.agentModelOverrides"] = JSON.stringify({ key: "task.agentModelOverrides", value: {
+    "nemo-performance": "@custom", unrelated: "alpha/plain",
+  } });
+  const res = smokeScript(t, records, { capture: true });
+  assert.equal(res.code, 0, res.out);
+  assert.equal(res.evidence.cwd, res.cwd);
+  assert.deepEqual(res.evidence.agentAdvisor, {});
+  assert.equal(res.evidence.modelRoles.custom, "alpha/big:high");
+  assert.equal(Object.hasOwn(res.evidence.modelRoles, "unrelated"), false);
+  assert.deepEqual(res.evidence.agentModelOverrides, { "nemo-performance": "@custom" });
+  assert.ok(res.evidence.models.some((model) => model.selector === "alpha/big"));
+  assert.equal(res.calls.some((args) => args[0] === "-p"), false);
 });
 
-test("critical smoke fails unavailable or malformed role choices before dispatch", (t) => {
-  for (const roles of [
-    "not json", "null", "[]", "{}",
-    '{"advisor-critical":"alpha/big:high"}',
-    '{"key":"other","value":{"advisor-critical":"alpha/big:high"}}',
-    ...[null, [], {}, { "advisor-critical": "", "nemo-review": "beta/sol:high" },
-      { "advisor-critical": null, "nemo-review": "beta/sol:high" },
-      { "advisor-critical": 42, "nemo-review": "beta/sol:high" },
-      { "advisor-critical": "   ", "nemo-review": "beta/sol:high" },
-      { "advisor": "alpha/big:medium", "nemo-review": "beta/sol:high" },
-      { "nemo-review": "" }, { "nemo-review": [] },
-    ].map((value) => JSON.stringify({ key: "modelRoles", value })),
+test("critical smoke supports explicit advisor-disabled fallback", (t) => {
+  const records = configRecords();
+  records.modelRoles = JSON.stringify({ key: "modelRoles", value: { "nemo-review": "beta/sol:high" } });
+  records["task.agentModelOverrides"] = JSON.stringify({ key: "task.agentModelOverrides", value: { "nemo-performance": "@nemo-review" } });
+  records["task.agentAdvisor"] = JSON.stringify({ key: "task.agentAdvisor", value: {
+    "nemo-implementer": "off", "nemo-implementer-critical": "off",
+  } });
+  const res = smokeScript(t, records);
+  assert.equal(res.code, 0, res.out);
+});
+
+test("critical smoke blocks malformed records and unusable native mapping before provider dispatch", (t) => {
+  for (const [key, value] of [
+    ["modelRoles", "not json"],
+    ["modelRoles", JSON.stringify({ key: "other", value: {} })],
+    ["task.agentAdvisor", JSON.stringify({ key: "task.agentAdvisor", value: [] })],
+    ["task.agentModelOverrides", JSON.stringify({ key: "task.agentModelOverrides", value: {} })],
+    ["task.agentModelOverrides", JSON.stringify({ key: "task.agentModelOverrides", value: { "nemo-performance": "@nemo-review" } })],
   ]) {
-    const res = smokeScript(t, roles);
+    const records = configRecords();
+    records[key] = value;
+    const res = smokeScript(t, records);
     assert.equal(res.code, 1, res.out);
-    assert.match(res.out, /critical smoke model selection failed/);
-    assert.equal(res.calls.length, 1, "no provider dispatch on invalid configuration");
+    assert.equal(res.calls.some((args) => args[0] === "-p"), false);
   }
-  const unavailable = smokeScript(t, "{}", { configStatus: 1 });
+  const unavailable = smokeScript(t, configRecords(), { configStatus: 1 });
   assert.equal(unavailable.code, 1, unavailable.out);
-  assert.equal(unavailable.calls.length, 1);
+  assert.equal(unavailable.calls.some((args) => args[0] === "-p"), false);
 });
 
-test("noncritical smoke does not query model roles or require a performance expectation", (t) => {
-  const res = smokeScript(t, "not json", { mode: "light", configStatus: 1 });
+test("noncritical smoke does not query performance configuration", (t) => {
+  const res = smokeScript(t, {}, { mode: "light", configStatus: 1 });
   assert.equal(res.code, 0, res.out);
   assert.equal(res.calls.length, 1);
   assert.equal(res.calls[0][0], "-p");
-  assert.match(res.out, /smoke: PASS/);
 });

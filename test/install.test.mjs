@@ -487,6 +487,75 @@ test("advisor off turns the implementers' advisor off and writes no advisor role
   assert.deepEqual(JSON.parse(omp.stdout).value, { "nemo-implementer": "off", "nemo-implementer-critical": "off" });
 });
 
+function performanceModel(config) {
+  const alias = config.task.agentModelOverrides["nemo-performance"];
+  assert.match(alias, /^@/);
+  const selector = config.modelRoles[alias.slice(1)];
+  assert.equal(typeof selector, "string", `unresolved performance alias ${alias}`);
+  const [model, thinking] = selector.split(":");
+  const fixture = JSON.parse(fs.readFileSync(MODELS, "utf8")).models.find((entry) => entry.selector === model);
+  assert.ok(fixture, `performance model ${selector} is unavailable`);
+  if (thinking) assert.ok(fixture.thinking?.includes(thinking), `unsupported thinking level ${selector}`);
+  return selector;
+}
+
+test("performance selection survives advisor on/off/on and uninstall restores the user's mapping", (t) => {
+  const s = sandbox(t);
+  s.write("config.yml", YAML.stringify({
+    modelRoles: { personal: "alpha/plain" },
+    task: { agentModelOverrides: { "nemo-performance": "@personal", scout: "alpha/plain" } },
+  }));
+  const before = snapshot(s.home);
+  const on = [...INSTALL, "--advisor", "alpha/big", "--advisor-critical", "beta/sol", "--review", "alpha/small"];
+  const installed = s.sn([...on, "--overwrite-drift"]);
+  assert.equal(installed.code, 0, installed.out);
+  let config = YAML.parse(s.read("config.yml"));
+  assert.equal(performanceModel(config), "beta/sol:high");
+  const off = s.sn([...INSTALL, "--advisor", "off", "--review", "alpha/small"]);
+  assert.equal(off.code, 0, off.out);
+  config = YAML.parse(s.read("config.yml"));
+  assert.equal(config.modelRoles["advisor-critical"], undefined);
+  assert.equal(performanceModel(config), "alpha/small:high");
+  const enabled = s.sn(on);
+  assert.equal(enabled.code, 0, enabled.out);
+  assert.equal(performanceModel(YAML.parse(s.read("config.yml"))), "beta/sol:high");
+  const removed = s.sn(["uninstall"]);
+  assert.equal(removed.code, 0, removed.out);
+  assert.deepEqual(snapshot(s.home), before);
+});
+
+for (const decision of ["--keep-settings", "--overwrite-drift"]) {
+  test(`performance override drift requires consent and honors ${decision} through uninstall`, (t) => {
+    const s = sandbox(t);
+    s.write("config.yml", YAML.stringify({
+      modelRoles: { personal: "alpha/plain" },
+      task: { agentModelOverrides: { "nemo-performance": "@personal" } },
+    }));
+    const original = snapshot(s.home);
+    const installed = s.sn([...INSTALL, "--overwrite-drift"]);
+    assert.equal(installed.code, 0, installed.out);
+    const doc = YAML.parseDocument(s.read("config.yml"));
+    doc.setIn(["task", "agentModelOverrides", "nemo-performance"], "@personal");
+    s.write("config.yml", doc.toString());
+    const drifted = snapshot(s.home);
+    const refused = s.sn(INSTALL);
+    assert.equal(refused.code, 3, refused.out);
+    assert.deepEqual(snapshot(s.home), drifted);
+    const resolved = s.sn([...INSTALL, decision]);
+    assert.equal(resolved.code, 0, resolved.out);
+    const config = YAML.parse(s.read("config.yml"));
+    if (decision === "--keep-settings") {
+      assert.equal(performanceModel(config), "alpha/plain");
+      assert.equal(Object.hasOwn(s.manifest().config.keys, "task.agentModelOverrides.nemo-performance"), false);
+    } else {
+      assert.equal(performanceModel(config), "alpha/big:high");
+    }
+    const removed = s.sn(["uninstall"]);
+    assert.equal(removed.code, 0, removed.out);
+    assert.deepEqual(snapshot(s.home), original);
+  });
+}
+
 test("defaults: strongest remote model high, cross-provider review, advisor from implementation model", (t) => {
   const s = sandbox(t);
   assert.equal(s.sn(INSTALL).code, 0);
