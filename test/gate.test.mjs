@@ -312,7 +312,7 @@ test("the orchestrator's ordinary git commands are not gated", (t) => {
   omp.emit("tool_call", { toolName: "write", input: { path: path.join(dir, "a.js") } }, main);
   fs.writeFileSync(path.join(dir, "a.js"), "export const a = 2;\nexport const b = 3;\n");
   assert.notEqual(omp.emit("tool_call", { toolName: "bash", input: { command: 'git commit -am "retry push"' } }, main)?.block, true);
-  assert.match(omp.emit("tool_call", { toolName: "bash", input: { command: "cd x; git push" } }, main)?.reason ?? "", /cannot tell which repository/);
+  assert.match(omp.emit("tool_call", { toolName: "bash", input: { command: "cd x; git push" } }, main)?.reason ?? "", /publish with a plain/);
 });
 
 test("SUPER-NEMO's own evidence files inside .git are not gated and raise no warning", (t) => {
@@ -332,6 +332,16 @@ test("a push aimed at a git directory without a work tree is refused", (t) => {
   const main = { cwd: dir, agent: { kind: "main" } };
   fs.symlinkSync(path.join(dir, ".git"), path.join(dir, "GITDIR"));
   for (const target of [path.join(dir, "GITDIR"), path.join(dir, ".GIT")]) {
-    assert.match(omp.emit("tool_call", { toolName: "bash", input: { command: `git -C ${target} push` } }, main)?.reason ?? "", /cannot tell which repository/, target);
+    assert.match(omp.emit("tool_call", { toolName: "bash", input: { command: `git -C ${target} push` } }, main)?.reason ?? "", /publish with a plain/, target);
+  }
+});
+
+test("only plain publish shapes are accepted", () => {
+  const base = fs.realpathSync(os.tmpdir());
+  for (const c of ["git push", "git push -u origin feature/x", "git -c push.default=current push", `git -C ${base} push origin main`, `cd ${base} && git push`, 'gh pr create --title "Fix the parser" --draft']) {
+    assert.notEqual(publishDir(c, base), null, c);
+  }
+  for (const c of ["git push && rm -rf x", "git push; git push", "git push $(echo origin)", "python -c 'import os; os.system(\"git push\")'", "gh pr create -R other/repo", "gh pr merge https://github.com/o/r/pull/1", "gh pr ready github.com/o/r/pull/2", "gh pr create --repo=o/r", "gh pr create && git push", "gh api repos/o/r/pulls -X POST -f t=x"]) {
+    assert.equal(publishDir(c, base), null, c);
   }
 });
