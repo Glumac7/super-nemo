@@ -240,6 +240,7 @@ test("subagent publish detection covers wrapped git push and gh api PR writes", 
   assert.equal(publishDir("git push", "/w/r1/.git/hooks"), null);
   assert.equal(publishDir("git -C /tmp -C /usr push", "/tmp"), null, "several -C are ambiguous");
   assert.equal(publishDir("git -C $HOME/x push", "/tmp"), null, "shell expansion is refused");
+  for (const c of ["git -C /tm[p] push", "git -C {/tmp,/usr} push", "cd /tmp && git -C /usr push", 'git -C "/tmp"x push']) assert.equal(publishDir(c, "/"), null, c);
   assert.equal(publishDir("git -C /does/not/exist push", "/tmp"), null, "a missing target is refused");
 });
 
