@@ -285,8 +285,10 @@ test("verdicts reach every touched repository; tester copies and removed worktre
   omp.emit("tool_call", { toolName: "write", input: { path: path.join(copy.dir, "test", "x.test.js") } }, { cwd: r1.dir, agent: { kind: "sub", name: "nemo-tester" } });
   fs.mkdirSync(path.join(copy.dir, "test"));
   fs.writeFileSync(path.join(copy.dir, "test", "x.test.js"), "test\n");
+  omp.emit("tool_call", { toolName: "bash", input: { command: "npm install", cwd: copy.dir } }, { cwd: r1.dir, agent: { kind: "sub", name: "nemo-tester" } });
   yieldVerdict(omp, { cwd: r1.dir, agent: { kind: "sub", id: "Q", name: "nemo-quality" } }, "PASS");
-  assert.equal(omp.emit("tool_call", { toolName: "bash", input: { command: `git -C ${r2.dir} push` } }, main), undefined, "r2 reviewed");
+  fs.writeFileSync(path.join(copy.dir, "test", "x.test.js"), "test 2\n");   // the copy keeps changing after the review
+  assert.equal(omp.emit("tool_call", { toolName: "bash", input: { command: `git -C ${r2.dir} push` } }, main), undefined, "r2 reviewed; copy not gated");
   fs.rmSync(r2.dir, { recursive: true, force: true });
   assert.equal(omp.emit("session_stop", {}, main), undefined, "removed worktree and tester copy are not gated");
 });
