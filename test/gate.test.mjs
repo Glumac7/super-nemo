@@ -231,13 +231,16 @@ test("subagent publish detection covers wrapped git push and gh api PR writes", 
   for (const c of ["git log", "gh api repos/o/r/pulls", "echo push"]) assert.ok(!subagentPublishes(c), c);
   for (const c of ['git commit -am "retry push"', "git log --grep=push", "git stash push"]) assert.ok(!publishes(c), `orchestrator: ${c}`);
   for (const c of ["git send-pack origin x", "git -c alias.p=push p", "gh api repos/o/r/pulls -X GET -X POST -f t=x"]) assert.ok(publishes(c), `orchestrator: ${c}`);
-  assert.equal(publishDir("git -C ../other push", "/w/r1"), "/w/other");
-  assert.equal(publishDir("cd '/w/r2' && git push", "/w/r1"), "/w/r2");
+  const base = fs.realpathSync(os.tmpdir());
+  assert.equal(publishDir(`git -C ${base} push`, "/"), base);
+  assert.equal(publishDir(`cd '${base}' && git push`, "/"), base);
   assert.equal(publishDir("cd r2; git push", "/w/r1"), null, "unclear target");
   assert.equal(publishDir("git --git-dir=x push", "/w/r1"), null);
   assert.equal(publishDir("git -C /w/r1/.git push", "/w/r1"), null, "a push from inside .git is refused");
   assert.equal(publishDir("git push", "/w/r1/.git/hooks"), null);
-  assert.equal(publishDir("git -C /w/a -C /w/b push", "/w/r1"), null, "several -C are ambiguous");
+  assert.equal(publishDir("git -C /tmp -C /usr push", "/tmp"), null, "several -C are ambiguous");
+  assert.equal(publishDir("git -C $HOME/x push", "/tmp"), null, "shell expansion is refused");
+  assert.equal(publishDir("git -C /does/not/exist push", "/tmp"), null, "a missing target is refused");
 });
 
 test("a second repository is gated at stop and on push", (t) => {
