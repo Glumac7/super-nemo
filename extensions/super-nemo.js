@@ -237,8 +237,9 @@ export default async function superNemo(pi) {
   try {
     (await import(GATE)).register(pi);
   } catch (error) {
-    if (error?.code === "ERR_MODULE_NOT_FOUND") return void console.error(`SUPER-NEMO gates not found at ${GATE}; rules apply as instructions only.`);
-    const message = `SUPER-NEMO mechanical gates NOT loaded (${error?.message ?? error}); its rules apply as instructions only.`;
+    const message = error?.code === "ERR_MODULE_NOT_FOUND"
+      ? `SUPER-NEMO mechanical gates not found at ${GATE}; its rules apply as instructions only.`
+      : `SUPER-NEMO mechanical gates NOT loaded (${error?.message ?? error}); its rules apply as instructions only.`;
     console.error(message);
     pi.on("session_start", (_event, ctx) => { if (ctx.hasUI) ctx.ui.notify(message, "warning"); });
   }

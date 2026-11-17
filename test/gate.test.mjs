@@ -230,6 +230,7 @@ test("subagent publish detection covers wrapped git push and gh api PR writes", 
   for (const c of ["sh -c 'git push'", "git -c core.x=1 -C . push", "gh api repos/o/r/pulls -X POST -f title=x", "git -c alias.p=push p", "git send-pack x", "gh api graphql -f q=x"]) assert.ok(subagentPublishes(c), c);
   for (const c of ["git log", "gh api repos/o/r/pulls", "echo push"]) assert.ok(!subagentPublishes(c), c);
   for (const c of ['git commit -am "retry push"', "git log --grep=push", "git stash push"]) assert.ok(!publishes(c), `orchestrator: ${c}`);
+  for (const c of ["git send-pack origin x", "git -c alias.p=push p", "gh api repos/o/r/pulls -X GET -X POST -f t=x"]) assert.ok(publishes(c), `orchestrator: ${c}`);
   assert.equal(publishDir("git -C ../other push", "/w/r1"), "/w/other");
   assert.equal(publishDir("cd '/w/r2' && git push", "/w/r1"), "/w/r2");
   assert.equal(publishDir("cd r2; git push", "/w/r1"), null, "unclear target");
