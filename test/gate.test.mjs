@@ -112,6 +112,11 @@ test("the code fingerprint covers untracked files and survives a commit", (t) =>
   assert.equal(git("status", "--porcelain"), "", "fingerprinting leaves the real index alone");
 });
 
+function yieldVerdict(omp, ctx, verdict, isError = false) {
+  omp.emit("tool_call", { toolName: "yield", input: { data: { verdict, summary: "x" } } }, ctx);
+  return omp.emit("tool_result", { toolName: "yield", isError }, ctx);
+}
+
 function fakeOmp() {
   const handlers = {};
   return { pi: { on: (name, fn) => { handlers[name] = fn; } }, emit: (name, event, ctx) => handlers[name]?.(event, ctx) };
@@ -122,7 +127,7 @@ test("end to end: the stop gate blocks once per code state, receipts close it, p
   const omp = fakeOmp();
   register(omp.pi, { runs: new Map(), impeccable: null });
   const main = { cwd: dir, agent: { kind: "main", name: "main" } };
-  const sub = (name) => ({ cwd: dir, agent: { kind: "sub", name } });
+  const sub = (name) => ({ cwd: dir, agent: { kind: "sub", id: name, name } });
 
   omp.emit("before_subagent_spawn", { agent: "nemo-implementer" }, main);
   assert.equal(omp.emit("tool_call", { toolName: "write", input: { path: path.join(dir, "a.js") } }, sub("nemo-implementer")), undefined);
@@ -134,13 +139,11 @@ test("end to end: the stop gate blocks once per code state, receipts close it, p
   assert.equal(omp.emit("session_stop", {}, main), undefined, "told once about this code state");
   assert.match(omp.emit("tool_call", { toolName: "bash", input: { command: "git push -u origin work" } }, main)?.reason ?? "", /publication waits/);
 
-  for (const a of ["nemo-architect", "nemo-quality", "nemo-qa", "nemo-final-review"]) {
-    omp.emit("tool_call", { toolName: "yield", input: { data: { verdict: "PASS", summary: "ok" } } }, sub(a));
-  }
+  for (const a of ["nemo-architect", "nemo-quality", "nemo-qa", "nemo-final-review"]) yieldVerdict(omp, sub(a), "PASS");
   assert.equal(omp.emit("tool_call", { toolName: "bash", input: { command: "git push -u origin work" } }, main), undefined);
 
-  fs.appendFileSync(path.join(dir, "a.js"), "export const d = 4;\n");
-  assert.match(omp.emit("session_stop", {}, main)?.reason ?? "", /PASS was for an earlier code state/);
+  fs.appendFileSync(path.join(dir, "a.js"), "export const d = 4;\nexport const e = 5;\n");
+  assert.match(omp.emit("session_stop", {}, main)?.reason ?? "", /nemo-quality: no verdict yet/, "a passed gate starts a new run");
 });
 
 test("subagent sessions share the run with the main session", async (t) => {
@@ -150,7 +153,7 @@ test("subagent sessions share the run with the main session", async (t) => {
   register(child.pi, { impeccable: null });   // OMP rebinds the factory per subagent; default state must be shared
   main.emit("tool_call", { toolName: "write", input: { path: path.join(dir, "b.js") } }, { cwd: dir, agent: { kind: "main" } });
   fs.writeFileSync(path.join(dir, "b.js"), "export const b = 2;\n");
-  child.emit("tool_call", { toolName: "yield", input: { data: { verdict: "PASS" } } }, { cwd: dir, agent: { kind: "sub", name: "nemo-quality" } });
+  yieldVerdict(child, { cwd: dir, agent: { kind: "sub", id: "Q1", name: "nemo-quality" } }, "PASS");
   assert.equal(main.emit("session_stop", {}, { cwd: dir, agent: { kind: "main" } }), undefined);
 });
 
@@ -162,4 +165,63 @@ test("task results also deliver receipts", async (t) => {
   const main = { cwd: dir, agent: { kind: "main", name: "main" } };
   await omp.emit("tool_result", { toolName: "task", details: { results: [{ agent: "nemo-quality", structuredOutput: { data: { verdict: "PASS" } } }] } }, main);
   assert.deepEqual([...runs.values()][0].receipts.map((r) => [r.agent, r.verdict]), [["nemo-quality", "PASS"]]);
+});
+
+test("ownership is judged relative to the repository, not parent folders", (t) => {
+  const { dir } = repo(t);
+  const nested = path.join(dir, "tests-home");
+  const rel = (p) => path.relative(dir, p);
+  assert.ok(!blocked("nemo-implementer", "write", { path: path.join(dir, "src", "a.ts") }, rel));
+  assert.ok(blocked("nemo-tester", "write", { path: path.join(nested, "src", "a.ts") }, () => "src/a.ts"));
+  assert.ok(!blocked("nemo-implementer", "write", { path: "/Users/me/specs/app/src/a.ts" }, () => "src/a.ts"));
+});
+
+test("subagents never publish; git options before push are caught", () => {
+  assert.ok(blocked("nemo-implementer", "bash", { command: "git push origin x" }));
+  assert.ok(blocked("nemo-tester", "bash", { command: "gh pr create --fill" }));
+  for (const c of ["git -C repo push", "git -c a=b push -u origin x", "git --no-pager push"]) assert.match(c, /push/), assert.ok(blocked("nemo-implementer", "bash", { command: c }), c);
+  assert.ok(!blocked("nemo-implementer", "bash", { command: "git log --oneline" }));
+});
+
+test("risk ignores risky words in tests and docs", () => {
+  assert.equal(score(["test/a.test.js"], 3, "", "").floor, "LIGHT");
+  assert.equal(score(["README.md"], 3, "", "").errorHandling, false);
+});
+
+test("edit inputs listing paths are covered", () => {
+  assert.deepEqual(writeTargets("edit", { paths: ["src/a.ts", "src/b.ts"] }), ["src/a.ts", "src/b.ts"]);
+});
+
+test("a rejected yield records no verdict; an accepted one does", async (t) => {
+  const { dir } = repo(t);
+  const omp = fakeOmp();
+  const runs = new Map();
+  register(omp.pi, { runs, impeccable: null });
+  const ctx = { cwd: dir, agent: { kind: "sub", id: "Q", name: "nemo-quality" } };
+  await yieldVerdict(omp, ctx, "PASS", true);
+  assert.equal([...runs.values()].flatMap((r) => r.receipts).length, 0);
+  await yieldVerdict(omp, ctx, "PASS");
+  assert.equal([...runs.values()].flatMap((r) => r.receipts).length, 1);
+});
+
+test("git failures never block ordinary work and are reported", () => {
+  const omp = fakeOmp();
+  register(omp.pi, { runs: new Map(), impeccable: null });
+  const gone = path.join(os.tmpdir(), `sn-gate-missing-${process.pid}`);
+  const ctx = { cwd: gone, agent: { kind: "sub", name: "nemo-implementer" } };
+  const out = omp.emit("tool_call", { toolName: "write", input: { path: path.join(gone, "a.js") } }, ctx);
+  assert.notEqual(out?.block, true);
+});
+
+test("pushes with no run are still checked against the upstream", (t) => {
+  const { dir, git } = repo(t);
+  git("branch", "base");
+  git("branch", "--set-upstream-to=base");
+  fs.writeFileSync(path.join(dir, "b.js"), "export const b = 2;\nexport const c = 3;\n");
+  git("add", "-A");
+  git("commit", "-qm", "unreviewed");
+  const omp = fakeOmp();
+  register(omp.pi, { runs: new Map(), impeccable: null });
+  const out = omp.emit("tool_call", { toolName: "bash", input: { command: "git push" } }, { cwd: dir, agent: { kind: "main" } });
+  assert.match(out?.reason ?? "", /publication waits/);
 });
