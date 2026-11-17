@@ -235,6 +235,8 @@ test("subagent publish detection covers wrapped git push and gh api PR writes", 
   assert.equal(publishDir("cd '/w/r2' && git push", "/w/r1"), "/w/r2");
   assert.equal(publishDir("cd r2; git push", "/w/r1"), null, "unclear target");
   assert.equal(publishDir("git --git-dir=x push", "/w/r1"), null);
+  assert.equal(publishDir("git -C /w/r1/.git push", "/w/r1"), null, "a push from inside .git is refused");
+  assert.equal(publishDir("git push", "/w/r1/.git/hooks"), null);
 });
 
 test("a second repository is gated at stop and on push", (t) => {
