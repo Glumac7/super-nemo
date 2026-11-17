@@ -303,3 +303,13 @@ test("the orchestrator's ordinary git commands are not gated", (t) => {
   assert.notEqual(omp.emit("tool_call", { toolName: "bash", input: { command: 'git commit -am "retry push"' } }, main)?.block, true);
   assert.match(omp.emit("tool_call", { toolName: "bash", input: { command: "cd x; git push" } }, main)?.reason ?? "", /cannot tell which repository/);
 });
+
+test("SUPER-NEMO's own evidence files inside .git are not gated and raise no warning", (t) => {
+  const { dir } = repo(t);
+  const omp = fakeOmp();
+  const runs = new Map();
+  register(omp.pi, { runs, impeccable: null });
+  const out = omp.emit("tool_call", { toolName: "write", input: { path: path.join(dir, ".git", "super-nemo", "task.md") } }, { cwd: dir, agent: { kind: "main" } });
+  assert.equal(out, undefined);
+  assert.equal(runs.size, 0);
+});

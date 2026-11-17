@@ -56,7 +56,16 @@ NORMAL and CRITICAL separate authorship: `nemo-implementer` / `nemo-implementer-
 
 Before dispatch, the orchestrator retains the pre-tester Git revision, complete integrated-source snapshot's cryptographic digest and approved test/fixture path set in its **trusted session state**. Snapshots/diffs saved under `$SN` are mutable evidence/storage, not trust anchors. Immediately before acceptance and **before any** integration/auto-application, it recomputes the snapshot digest against that session-held anchor and independently generates/audits the full candidate diff, including new files. Agent-supplied digests or summaries are not authority. Modified baselines, out-of-scope production/config/agent/permission edits and auto-applied output are rejected; only independently validated test/fixture changes are applied. It records target/source/test evidence for reviewers, then runs checks after integration. Disposable targets contain only repository material, not copies of home directories, user configuration or secrets.
 
-This authorship gate is a workflow responsibility, **not an OS sandbox**. The tester and its tools are trusted same-user execution: prompts and disposable workspaces do not prevent secret reads, network access or destructive side effects. Such actions remain prohibited by instructions rather than technically confined; this inherited runtime risk requires human review for CRITICAL work.
+This authorship gate is a workflow responsibility, **not an OS sandbox**. The tester and its tools are trusted same-user execution: disposable workspaces do not prevent network access or destructive side effects, and the mechanical gates below are heuristics a determined agent can evade. This inherited runtime risk requires human review for CRITICAL work.
+
+**Mechanical gates.** The SUPER-NEMO OMP extension (`lib/gate.mjs`) enforces the core rules through tool hooks instead of trusting instructions alone:
+- no agent reads or writes `.env`, key or credential files;
+- `nemo-tester` writes only test/fixture paths, implementers never write tests, and `nemo-qa` / `nemo-performance` cannot change files from the shell;
+- reviewer verdicts are recorded from their structured output and tied to the exact code state;
+- the diff's own risk sets a minimum mode (security-sensitive or risky code needs CRITICAL; config changes or larger edits need NORMAL);
+- OMP is refused once if it tries to finish with required reviews missing, and `git push` / PR creation wait until they pass (only the orchestrator may publish).
+
+Risky edits get a security note, a new `nemo-failures` reviewer checks changed error handling, and UI edits are linted with `impeccable detect` when it is installed.
 
 If the runtime cannot preserve trusted session state or prevent auto-application, the split is **advisory only**: human review of the full diff is required before accepting tester work, and no enforced isolation is claimed.
 
