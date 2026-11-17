@@ -2,6 +2,7 @@
 name: nemo-security
 description: "SUPER-NEMO read-only security reviewer: trust boundaries, authn/authz, injection, secrets, data exposure, privilege escalation."
 tools: read, grep, glob, find, lsp, ast_grep
+structured: true
 model: "@nemo-review"
 autoloadSkills: [super-nemo-security-review]
 output:

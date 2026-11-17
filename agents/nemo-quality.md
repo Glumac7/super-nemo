@@ -2,6 +2,7 @@
 name: nemo-quality
 description: "SUPER-NEMO read-only code-quality reviewer: readability, complexity, duplication, naming, API quality, dead code."
 tools: read, grep, glob, find, lsp, ast_grep
+structured: true
 model: "@nemo-review"
 autoloadSkills: [nemo-quality-review]
 output:

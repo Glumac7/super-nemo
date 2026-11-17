@@ -2,6 +2,7 @@
 name: nemo-performance
 description: "SUPER-NEMO read-only performance reviewer: reproducible before/after measurements, demonstrated bottlenecks, regressions and resource constraints."
 tools: read, grep, glob, find, lsp, bash
+structured: true
 model: "@nemo-review"
 autoloadSkills: [nemo-performance-review]
 output:
