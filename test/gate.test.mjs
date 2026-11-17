@@ -237,6 +237,7 @@ test("subagent publish detection covers wrapped git push and gh api PR writes", 
   assert.equal(publishDir("git --git-dir=x push", "/w/r1"), null);
   assert.equal(publishDir("git -C /w/r1/.git push", "/w/r1"), null, "a push from inside .git is refused");
   assert.equal(publishDir("git push", "/w/r1/.git/hooks"), null);
+  assert.equal(publishDir("git -C /w/a -C /w/b push", "/w/r1"), null, "several -C are ambiguous");
 });
 
 test("a second repository is gated at stop and on push", (t) => {
@@ -314,4 +315,15 @@ test("SUPER-NEMO's own evidence files inside .git are not gated and raise no war
   const out = omp.emit("tool_call", { toolName: "write", input: { path: path.join(dir, ".git", "super-nemo", "task.md") } }, { cwd: dir, agent: { kind: "main" } });
   assert.equal(out, undefined);
   assert.equal(runs.size, 0);
+});
+
+test("a push aimed at a git directory without a work tree is refused", (t) => {
+  const { dir } = repo(t);
+  const omp = fakeOmp();
+  register(omp.pi, { runs: new Map(), impeccable: null });
+  const main = { cwd: dir, agent: { kind: "main" } };
+  fs.symlinkSync(path.join(dir, ".git"), path.join(dir, "GITDIR"));
+  for (const target of [path.join(dir, "GITDIR"), path.join(dir, ".GIT")]) {
+    assert.match(omp.emit("tool_call", { toolName: "bash", input: { command: `git -C ${target} push` } }, main)?.reason ?? "", /cannot tell which repository/, target);
+  }
 });
