@@ -226,7 +226,7 @@ test("pushes with no run are still checked against the upstream", (t) => {
   assert.match(out?.reason ?? "", /publication waits/);
 });
 
-test("subagent publish detection covers wrapped git push and gh api PR writes", () => {
+test("subagent publish detection covers wrapped git push and gh api PR writes", (t) => {
   for (const c of ["sh -c 'git push'", "git -c core.x=1 -C . push", "gh api repos/o/r/pulls -X POST -f title=x", "git -c alias.p=push p", "git send-pack x", "gh api graphql -f q=x"]) assert.ok(subagentPublishes(c), c);
   for (const c of ["git log", "gh api repos/o/r/pulls", "echo push"]) assert.ok(!subagentPublishes(c), c);
   for (const c of ['git commit -am "retry push"', "git log --grep=push", "git stash push"]) assert.ok(!publishes(c), `orchestrator: ${c}`);
@@ -241,6 +241,10 @@ test("subagent publish detection covers wrapped git push and gh api PR writes", 
   assert.equal(publishDir("git -C /tmp -C /usr push", "/tmp"), null, "several -C are ambiguous");
   assert.equal(publishDir("git -C $HOME/x push", "/tmp"), null, "shell expansion is refused");
   for (const c of ["git -C /tm[p] push", "git -C {/tmp,/usr} push", "cd /tmp && git -C /usr push", 'git -C "/tmp"x push']) assert.equal(publishDir(c, "/"), null, c);
+  for (const c of ["{ cd /usr; git push; }", "if cd /usr; then git push; fi", "x=1 cd /usr && git push", "env -C /usr git push", 'sh -c "cd /usr && git push"', "bash -c 'git push'", "eval git push"]) assert.equal(publishDir(c, "/tmp"), null, c);
+  const spaced = fs.mkdtempSync(path.join(os.tmpdir(), "sn gate "));
+  t.after(() => fs.rmSync(spaced, { recursive: true, force: true }));
+  assert.equal(publishDir(`cd "${spaced}" && git push`, "/"), spaced, "quoted paths may contain spaces");
   assert.equal(publishDir("git -C /does/not/exist push", "/tmp"), null, "a missing target is refused");
 });
 
