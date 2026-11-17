@@ -4,7 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
-import { findVerdict, missing, policy, register, score, securityNote, treeOf, writeTargets } from "../lib/gate.mjs";
+import { findVerdict, missing, policy, publishDir, publishes, register, score, securityNote, treeOf, writeTargets } from "../lib/gate.mjs";
 
 const blocked = (...a) => policy(...a)?.block === true;
 
@@ -224,4 +224,49 @@ test("pushes with no run are still checked against the upstream", (t) => {
   register(omp.pi, { runs: new Map(), impeccable: null });
   const out = omp.emit("tool_call", { toolName: "bash", input: { command: "git push" } }, { cwd: dir, agent: { kind: "main" } });
   assert.match(out?.reason ?? "", /publication waits/);
+});
+
+test("subagent publish detection covers wrapped git push and gh api PR writes", () => {
+  for (const c of ["sh -c 'git push'", "git -c core.x=1 -C . push", "gh api repos/o/r/pulls -X POST -f title=x"]) assert.ok(publishes(c), c);
+  for (const c of ["git log", "gh api repos/o/r/pulls", "echo push"]) assert.ok(!publishes(c), c);
+  assert.equal(publishDir("git -C ../other push", "/w/r1"), "/w/other");
+  assert.equal(publishDir("cd '/w/r2' && git push", "/w/r1"), "/w/r2");
+});
+
+test("a second repository is gated at stop and on push", (t) => {
+  const r1 = repo(t), r2 = repo(t);
+  const omp = fakeOmp();
+  register(omp.pi, { runs: new Map(), impeccable: null });
+  const main = { cwd: r1.dir, agent: { kind: "main" } };
+  omp.emit("tool_call", { toolName: "write", input: { path: path.join(r2.dir, "x.js") } }, main);
+  fs.writeFileSync(path.join(r2.dir, "x.js"), "export const x = 1;\nexport const y = 2;\n");
+  assert.match(omp.emit("tool_call", { toolName: "bash", input: { command: `git -C ${r2.dir} push` } }, main)?.reason ?? "", /publication waits/);
+  assert.match(omp.emit("session_stop", {}, main)?.reason ?? "", new RegExp(path.basename(r2.dir)));
+});
+
+test("with no upstream and no origin, every file counts as unreviewed", (t) => {
+  const { dir } = repo(t);
+  const omp = fakeOmp();
+  register(omp.pi, { runs: new Map(), impeccable: null });
+  const out = omp.emit("tool_call", { toolName: "bash", input: { command: "git push -u origin work" } }, { cwd: dir, agent: { kind: "main" } });
+  assert.match(out?.reason ?? "", /publication waits/);
+});
+
+test("a real git failure is reported, never blocks a write, and the stop note comes once", (t) => {
+  const { dir } = repo(t);
+  const omp = fakeOmp();
+  register(omp.pi, { runs: new Map(), impeccable: null });
+  const main = { cwd: dir, agent: { kind: "main" } };
+  omp.emit("tool_call", { toolName: "write", input: { path: path.join(dir, "a.js") } }, main);   // run exists
+  const bin = fs.mkdtempSync(path.join(os.tmpdir(), "sn-fakegit-"));
+  fs.writeFileSync(path.join(bin, "git"), "#!/bin/sh\necho 'fatal: simulated failure' >&2\nexit 2\n", { mode: 0o755 });
+  const PATH = process.env.PATH;
+  process.env.PATH = `${bin}${path.delimiter}${PATH}`;
+  t.after(() => { process.env.PATH = PATH; fs.rmSync(bin, { recursive: true, force: true }); });
+  const out = omp.emit("tool_call", { toolName: "write", input: { path: path.join(dir, "b.js") } }, { cwd: dir, agent: { kind: "sub", name: "nemo-implementer" } });
+  assert.notEqual(out?.block, true);
+  assert.match(out?.additionalContext ?? "", /could not/);
+  assert.match(omp.emit("session_stop", {}, main)?.additionalContext ?? "", /could not evaluate/);
+  assert.equal(omp.emit("session_stop", {}, main), undefined, "reported once per session");
+  assert.match(omp.emit("tool_call", { toolName: "bash", input: { command: "git push" } }, main)?.reason ?? "", /could not evaluate/);
 });
