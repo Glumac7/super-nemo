@@ -4,7 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
-import { findVerdict, missing, policy, publishDir, publishes, register, score, securityNote, treeOf, writeTargets } from "../lib/gate.mjs";
+import { findVerdict, missing, policy, publishDir, publishes, register, subagentPublishes, score, securityNote, treeOf, writeTargets } from "../lib/gate.mjs";
 
 const blocked = (...a) => policy(...a)?.block === true;
 
@@ -227,10 +227,13 @@ test("pushes with no run are still checked against the upstream", (t) => {
 });
 
 test("subagent publish detection covers wrapped git push and gh api PR writes", () => {
-  for (const c of ["sh -c 'git push'", "git -c core.x=1 -C . push", "gh api repos/o/r/pulls -X POST -f title=x"]) assert.ok(publishes(c), c);
-  for (const c of ["git log", "gh api repos/o/r/pulls", "echo push"]) assert.ok(!publishes(c), c);
+  for (const c of ["sh -c 'git push'", "git -c core.x=1 -C . push", "gh api repos/o/r/pulls -X POST -f title=x", "git -c alias.p=push p", "git send-pack x", "gh api graphql -f q=x"]) assert.ok(subagentPublishes(c), c);
+  for (const c of ["git log", "gh api repos/o/r/pulls", "echo push"]) assert.ok(!subagentPublishes(c), c);
+  for (const c of ['git commit -am "retry push"', "git log --grep=push", "git stash push"]) assert.ok(!publishes(c), `orchestrator: ${c}`);
   assert.equal(publishDir("git -C ../other push", "/w/r1"), "/w/other");
   assert.equal(publishDir("cd '/w/r2' && git push", "/w/r1"), "/w/r2");
+  assert.equal(publishDir("cd r2; git push", "/w/r1"), null, "unclear target");
+  assert.equal(publishDir("git --git-dir=x push", "/w/r1"), null);
 });
 
 test("a second repository is gated at stop and on push", (t) => {
@@ -269,4 +272,31 @@ test("a real git failure is reported, never blocks a write, and the stop note co
   assert.match(omp.emit("session_stop", {}, main)?.additionalContext ?? "", /could not evaluate/);
   assert.equal(omp.emit("session_stop", {}, main), undefined, "reported once per session");
   assert.match(omp.emit("tool_call", { toolName: "bash", input: { command: "git push" } }, main)?.reason ?? "", /could not evaluate/);
+});
+
+test("verdicts reach every touched repository; tester copies and removed worktrees are not gated", (t) => {
+  const r1 = repo(t), r2 = repo(t), copy = repo(t);
+  const omp = fakeOmp();
+  register(omp.pi, { runs: new Map(), impeccable: null });
+  const main = { cwd: r1.dir, agent: { kind: "main" } };
+  omp.emit("tool_call", { toolName: "write", input: { path: path.join(r2.dir, "x.js") } }, main);
+  fs.writeFileSync(path.join(r2.dir, "x.js"), "export const x = 1;\n");
+  omp.emit("tool_call", { toolName: "write", input: { path: path.join(copy.dir, "test", "x.test.js") } }, { cwd: r1.dir, agent: { kind: "sub", name: "nemo-tester" } });
+  fs.mkdirSync(path.join(copy.dir, "test"));
+  fs.writeFileSync(path.join(copy.dir, "test", "x.test.js"), "test\n");
+  yieldVerdict(omp, { cwd: r1.dir, agent: { kind: "sub", id: "Q", name: "nemo-quality" } }, "PASS");
+  assert.equal(omp.emit("tool_call", { toolName: "bash", input: { command: `git -C ${r2.dir} push` } }, main), undefined, "r2 reviewed");
+  fs.rmSync(r2.dir, { recursive: true, force: true });
+  assert.equal(omp.emit("session_stop", {}, main), undefined, "removed worktree and tester copy are not gated");
+});
+
+test("the orchestrator's ordinary git commands are not gated", (t) => {
+  const { dir } = repo(t);
+  const omp = fakeOmp();
+  register(omp.pi, { runs: new Map(), impeccable: null });
+  const main = { cwd: dir, agent: { kind: "main" } };
+  omp.emit("tool_call", { toolName: "write", input: { path: path.join(dir, "a.js") } }, main);
+  fs.writeFileSync(path.join(dir, "a.js"), "export const a = 2;\nexport const b = 3;\n");
+  assert.notEqual(omp.emit("tool_call", { toolName: "bash", input: { command: 'git commit -am "retry push"' } }, main)?.block, true);
+  assert.match(omp.emit("tool_call", { toolName: "bash", input: { command: "cd x; git push" } }, main)?.reason ?? "", /cannot tell which repository/);
 });
