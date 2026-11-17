@@ -341,7 +341,7 @@ test("only plain publish shapes are accepted", () => {
   for (const c of ["git push", "git push -u origin feature/x", "git -c push.default=current push", `git -C ${base} push origin main`, `cd ${base} && git push`, 'gh pr create --title "Fix the parser" --draft']) {
     assert.notEqual(publishDir(c, base), null, c);
   }
-  for (const c of ["git push && rm -rf x", "git push; git push", "git push $(echo origin)", "python -c 'import os; os.system(\"git push\")'", "gh pr create -R other/repo", "gh pr merge https://github.com/o/r/pull/1", "gh pr ready github.com/o/r/pull/2", "gh pr create --repo=o/r", "gh pr create && git push", "gh api repos/o/r/pulls -X POST -f t=x"]) {
+  for (const c of ["git push && rm -rf x", "git push; git push", "git push $(echo origin)", "python -c 'import os; os.system(\"git push\")'", "gh pr create -R other/repo", "gh pr merge https://github.com/o/r/pull/1", "gh pr ready github.com/o/r/pull/2", "gh pr create --repo=o/r", "gh pr create && git push", "gh api repos/o/r/pulls -X POST -f t=x", 'gh pr create --body "$(cat x)"', "gh pr create --body <(cat x)", "gh pr create -Rother/repo", 'gh pr create "-R" o/r', "GH_REPO=o/r gh pr create", "gh pr merge HTTPS://GITHUB.COM/o/r/pull/1", "cd - && git push", "cd repo && git push", "cd -P /tmp && git push", "gh pr merge --squash -sR o/r 1", "gh pr merge -dRfoo/bar 1", "gh pr merge o/r#12"]) {
     assert.equal(publishDir(c, base), null, c);
   }
 });
