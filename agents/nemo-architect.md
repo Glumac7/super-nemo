@@ -2,6 +2,7 @@
 name: nemo-architect
 description: "SUPER-NEMO read-only architecture reviewer: boundaries, dependency direction, coupling, needless abstraction."
 tools: read, grep, glob, find, lsp, ast_grep
+structured: true
 model: "@nemo-review"
 autoloadSkills: [nemo-architecture-review]
 output:

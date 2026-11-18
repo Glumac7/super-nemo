@@ -2,6 +2,7 @@
 name: nemo-qa
 description: "SUPER-NEMO adversarial QA: verifies acceptance criteria by running the repo's checks and probing edge and failure cases."
 tools: read, grep, glob, find, lsp, bash
+structured: true
 model: "@nemo-review"
 autoloadSkills: [nemo-qa-review]
 output:

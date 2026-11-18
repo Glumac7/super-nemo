@@ -2,6 +2,7 @@
 name: nemo-final-review
 description: "SUPER-NEMO independent final adversarial reviewer. Returns PASS, FIX_REQUIRED or HUMAN_REVIEW_REQUIRED with evidence."
 tools: read, grep, glob, find, lsp, ast_grep
+structured: true
 model: "@nemo-review"
 autoloadSkills: [nemo-final-review]
 output:

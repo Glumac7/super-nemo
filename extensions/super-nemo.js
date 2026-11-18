@@ -2,7 +2,7 @@ import { execFile } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const ORIGIN = "https://github.com/Glumac7/super-nemo.git";
 const API = "https://api.github.com/repos/Glumac7/super-nemo/commits/main";
@@ -228,6 +228,19 @@ export function registerUpdateNotice(pi, { home = os.homedir(), fetchImpl = glob
   });
 }
 
-export default function superNemo(pi) {
+// Mechanical gates live in lib/gate.mjs next to this file's real checkout (OMP loads the symlink).
+// A checkout without it (or an import failure) keeps the prose-only workflow instead of breaking OMP.
+const GATE = pathToFileURL(path.join(path.dirname(SOURCE), "..", "lib", "gate.mjs")).href;
+
+export default async function superNemo(pi) {
   registerUpdateNotice(pi);
+  try {
+    (await import(GATE)).register(pi);
+  } catch (error) {
+    const message = error?.code === "ERR_MODULE_NOT_FOUND"
+      ? `SUPER-NEMO mechanical gates not found at ${GATE}; its rules apply as instructions only.`
+      : `SUPER-NEMO mechanical gates NOT loaded (${error?.message ?? error}); its rules apply as instructions only.`;
+    console.error(message);
+    pi.on("session_start", (_event, ctx) => { if (ctx.hasUI) ctx.ui.notify(message, "warning"); });
+  }
 }
