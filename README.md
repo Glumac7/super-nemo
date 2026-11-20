@@ -63,7 +63,7 @@ This authorship gate is a workflow responsibility, **not an OS sandbox**. The te
 - `nemo-tester` writes only test/fixture paths, implementers never write tests, and `nemo-qa` / `nemo-performance` cannot change files from the shell;
 - reviewer verdicts are recorded from their structured output and tied to the exact code state;
 - the diff's own risk sets a minimum mode (security-sensitive or risky code needs CRITICAL; config changes or larger edits need NORMAL);
-- OMP is refused once if it tries to finish with required reviews missing, and `git push` / PR creation wait until they pass (only the orchestrator may publish).
+- OMP is refused once if it tries to finish with required reviews missing, and `git push` / PR creation wait until they pass (only the orchestrator may publish); after a final HUMAN_REVIEW_REQUIRED the rest of the OMP process allows only feature-branch pushes and a draft PR with `--draft` (or `-d`) as the first argument (`gh pr create --draft --title …`); this limit does not survive an OMP restart.
 
 Risky edits get a security note, a new `nemo-failures` reviewer checks changed error handling, and UI edits are linted with `impeccable detect` when it is installed.
 
