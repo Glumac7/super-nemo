@@ -1,344 +1,124 @@
 # SUPER-NEMO
 
-SUPER-NEMO is a risk-routed coding workflow for [Oh My Pi](https://github.com/can1357/oh-my-pi) (`omp`). It runs inside OMP while you work on **your** Git repository; it is not a separate chat app or a library you add to your project. A small change gets a short review path; higher-risk changes get more checks and independent reviewers.
+A risk-routed coding workflow for [Oh My Pi](https://github.com/can1357/oh-my-pi) (`omp`). Once installed, it runs inside OMP whenever you ask for a change to a Git repository: small changes get a short path, risky ones get a dedicated tester, independent reviewers and a human-review handoff. It is OMP configuration (skills, agents, an extension), not a library you add to your project.
 
-## What's in this repository?
-
-| Path | Purpose |
-| --- | --- |
-| [`skills/super-nemo/SKILL.md`](skills/super-nemo/SKILL.md) | Routing rules, exact steps for each mode, and review gates |
-| [`agents/`](agents/) | Production implementer, dedicated test author, and independent reviewer roles used by OMP |
-| [`extensions/`](extensions/) | OMP integration for the workflow |
-| [`standards/`](standards/) | Engineering baseline applied during work |
-| [`sn`](sn), [`lib/`](lib/), [`install.sh`](install.sh) | Installer and commands to manage or verify the OMP setup |
-| [`test/`](test/), [`evals/`](evals/) | Automated tests and live smoke evaluation |
-
-Installation links this workflow into your OMP configuration and sets up model roles; the actual code changes happen in whichever Git repository you open with OMP. Reviewers inspect the change; they do not replace your approval or a security sandbox.
+The authoritative workflow is [`skills/super-nemo/SKILL.md`](skills/super-nemo/SKILL.md). This README covers installing, using and maintaining it.
 
 ## Install
 
-You need `omp` 18.3.0+ (signed in with `omp login` for the model providers you use), git, and Node.js 20+.
+Requires `omp` 18.3.0+ (signed in with `omp login`), git, Node.js 20+ and npm (the `sn` launcher runs `npm ci` on a fresh checkout).
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/Glumac7/super-nemo/main/install.sh | bash
 ```
 
-The installer downloads SUPER-NEMO to `~/.super-nemo/repo`, suggests remote models for coding, advising, and review (not OMP's built-in Ollama, LM Studio, or llama.cpp providers by default), then asks before changing your OMP setup. It keeps model roles and the general approval mode you already selected; explicit local model flags still work. **A fresh setup defaults to YOLO:** OMP runs commands without asking, including commands that change files. Choose `--approval write` or `--approval always-ask` to retain command prompts. Separately, interactive install asks whether eval code may run without confirmation, default [Y/n]: yes enables `tools.approval.eval: allow`, no retains `prompt`. `sn install --yes` accepts the fresh allow default; use `--eval-approval prompt` for unattended installs that require confirmation. Reinstall preselects the saved choice; `--reuse` and `sn update` retain it, including legacy installations that previously managed `prompt`. To change an old prompt choice explicitly, use `--eval-approval allow`. Settings you changed yourself (including eval approval) are not silently replaced; use `--overwrite-drift` to replace them.
+This clones to `~/.super-nemo/repo` and proposes models and settings. You confirm them or change them per role, then approve the plan before your OMP config changes. From your own clone, run `./sn install` instead. `--yes` accepts the proposed defaults **and runs the paid live smoke test** unless you also pass `--no-smoke`.
 
-If an older installation never managed eval approval, any existing value stays unmanaged unless you explicitly let SUPER-NEMO manage it—even if that value is already `prompt`. Keeping changed settings leaves that value unmanaged. To adopt or replace it interactively, decline the bulk keep question and explicitly accept the separate eval management question (default: leave it unmanaged). Without questions, adoption requires both `--eval-approval allow|prompt` and `--overwrite-drift` on `sn install`; `--overwrite-drift` alone does not consent to adopting unmanaged eval. This protects a user-set `deny` from being silently weakened to `prompt`.
+Install links the skills, agents and `extensions/super-nemo.js` into `~/.omp/agent/` (or `~/.omp/profiles/<name>/agent/` with `--profile`) and points `~/.super-nemo/current` at the checkout. It sets the model roles `default` and `nemo-review`, adds `advisor`, `advisor-critical` and `nemo-fast` when you select them, and adds the `AGENTS.md` block, the advisor watchdog and bash allow/deny patterns. It also creates `~/.local/bin/sn` but never edits shell startup files. If `~/.local/bin` is not on `PATH`, use `~/.super-nemo/repo/sn`.
 
-An older installation's existing unmanaged `task.agentModelOverrides.nemo-performance` also requires a keep/replace decision before adoption, even if it already matches the suggested role. `--keep-settings` preserves it without ownership; `--overwrite-drift` explicitly adopts/replaces it through the usual drift flow. A kept mapping remains unmanaged across updates and uninstall; CRITICAL preflight still blocks if its effective selection is weaker or unresolved.
+> [!WARNING]
+> **Approval defaults are permissive.** Install keeps your existing `tools.approvalMode`. If none is set, it uses `yolo`, and OMP runs commands without asking. Pass `--approval write` or `--approval always-ask` to keep prompts. Eval approval is a separate setting: the fresh default `allow` runs eval code without confirmation, even under `write` or `always-ask`. Use `--eval-approval prompt`, or answer no, to keep the prompt.
+>
+> Deny patterns are not a sandbox, and a project-level OMP config can override them. `sn verify` warns when the effective value differs from the installed one. Check effective approvals before using this on a sensitive repository. Reviews and smoke tests cost model API calls.
 
-## Use it
+## Use
 
-From the repository you want to work on, ask OMP for a code change as usual:
+From the repository you want to change:
 
 ```sh
-cd path/to/your-project
 omp "Fix the login form error and check the changed behavior"
+omp "super-nemo light: Fix the typo in the footer"   # force a mode: light | normal | critical
 ```
 
-SUPER-NEMO activates automatically for requests to change a repository. It does not run for questions or code-reading requests. Risk determines the mode:
+Change requests trigger the workflow automatically. Questions and code reading don't. `super-nemo:` with no mode, or no prefix at all, lets it choose:
 
-| Mode | When | Review path |
+| Mode | When | Path |
 | --- | --- | --- |
-| LIGHT | Tiny, isolated, low-risk fixes | Implement directly, run checks, get one independent quality review |
-| NORMAL | Most features, bugs, and meaningful refactors | Production implementer with advisor, dedicated tester, checks, independent architecture/quality/QA reviews and a code review, then final review |
-| CRITICAL | Auth, security, secrets, data, infrastructure, deploy, or other high-risk work | Production implementer with stronger advisor, dedicated tester covering failure/abuse paths, security and performance reviews, and a mandatory human-review handoff |
+| LIGHT | Tiny, isolated, low-risk | Implement directly → checks → one `nemo-quality` review |
+| NORMAL | Most features, bug fixes, refactors | `nemo-implementer` with advisor → `nemo-tester` → checks → architect, quality, QA and native `reviewer` (plus `nemo-failures` if error handling changed) → `nemo-final-review` |
+| CRITICAL | Auth, secrets, PII, migrations, infra/deploy, permissions, money | `nemo-implementer-critical` with a stronger advisor → tester (including abuse cases) → checks including security tooling → NORMAL reviewers plus `nemo-security` and `nemo-performance` → final review → **human review required** |
 
-Before work, SUPER-NEMO records a short scope contract: the requested outcome, acceptance criteria, non-goals, smallest repo-consistent approach, allowed production/test paths and planned dependency/contract/architecture/config changes (default none). Agents cannot expand it themselves. Necessary low-risk adjustments within your intent go to the orchestrator; material outcome, architecture/security-risk or external-contract changes beyond your ask require your decision. Ordinary within-scope implementation choices need no extra approval.
+Rules that hold in every mode:
 
-**“Wait a minute” approach check:** NORMAL briefly challenges the plan before implementation; CRITICAL makes this explicit and repeats it before costly or hard-to-reverse commitments within approved scope. Both reassess when assumptions fail, exceptions accumulate or additional repositories/dependencies/public-contract changes become necessary—not on a timer. The question is whether a simpler sound approach achieves the actual outcome, not merely whether the patch can be tidier. Fewer repositories is not automatically better: compatibility and ownership boundaries still matter. The existing advisor challenges, the orchestrator decides within scope, and unresolved material product tradeoffs go to you with options and a recommendation. LIGHT adds no checkpoint or advisor ceremony. This is instruction-based judgment, not automatic runtime enforcement.
+- **Scope contract.** Before work, the orchestrator records the requested outcome, acceptance criteria, non-goals and allowed production/test paths. Agents can't widen it. Material changes to the outcome, architecture, security risk or public contracts need your decision.
+- **Approach check** (NORMAL/CRITICAL). Before implementing, the orchestrator asks whether a simpler sound approach reaches the same outcome. It asks again when an assumption fails or new repositories, dependencies or contracts become necessary. CRITICAL also repeats it before costly or hard-to-reverse steps.
+- **Separate authorship.** Authors never approve their own work. In NORMAL/CRITICAL, implementers own production code. After the source is integrated, `nemo-tester` writes only allowlisted tests and fixtures, in a disposable copy of that exact source. The orchestrator verifies the source snapshot is unchanged and applies only validated test changes. This is a workflow rule, not an OS sandbox.
+- **Local by default.** Work happens on a non-protected branch, and changes stay local. Only an explicit request in the session lets the orchestrator commit, push the feature branch and open a **draft** PR. It never merges, deploys or marks a PR ready.
+- **Gates not run.** Infrastructure failures (quota, auth, timeout) leave a gate *not run*, never passed.
 
-Before accepting changes and handing off, the orchestrator uses a concrete Git path inventory and manifest/lockfile diff inspection against session-held scope, preserving unrelated dirty work. Existing quality review checks scope/simplicity in every mode; architecture and final review add their existing gates in NORMAL/CRITICAL. Unsupported expansion or evidence-backed needless complexity blocks handoff through the normal owner fix loop—not a new reviewer, complexity score or line cap. This helps keep changes focused; it is Git evidence plus model judgment, **not automatic write prevention or a sandbox**. Already auto-applied writes and attribution limits must be disclosed.
+**Mechanical gates** ([`lib/gate.mjs`](lib/gate.mjs), loaded by the extension) back up a narrower subset of these rules through OMP tool hooks:
 
-NORMAL and CRITICAL separate authorship: `nemo-implementer` / `nemo-implementer-critical` change production code and its documentation; `nemo-tester` writes behavioral tests and necessary fixtures **after source integration, in a dedicated disposable repository target containing the exact same effective source snapshot**. It receives the absolute target root, source revision/snapshot and an explicit test/fixture allowlist, not the production working tree as an edit target. Dispatch uses `isolated: false` so runtime isolation cannot auto-apply its changes. Implementers use runtime isolation only when every target path is in the session's own repository; work in another repository, several repositories or another branch/worktree gets an orchestrator-created dedicated worktree per repository, audited before integration. The tester uses the default coding model, adds no advisor configuration, and never fixes production code or approves work. `nemo-qa` independently verifies acceptance criteria read-only. LIGHT explicitly keeps direct implementation and any necessary tests with the orchestrator, without a dedicated tester.
+- No agent may read or write `.env`, key, `.npmrc`/`.netrc` or credential files. This includes this repo's own `.npmrc`.
+- Per-role write limits apply. Testers write only test paths, implementers never write tests, and `nemo-qa`/`nemo-performance` can't change files from the shell.
+- `git push` and `gh pr create` are refused until the hook's recorded reviews clear. In NORMAL/CRITICAL it checks each required reviewer's last recorded receipt: the final review's must be PASS or HUMAN_REVIEW_REQUIRED on the current code, and the others' must be PASS. A verdict is only skipped as a repeat when the same reviewer, verdict and code state were already recorded, so a fix that gets re-reviewed is recorded again; it doesn't replace the workflow's own review requirements. Docs-only changes open no mechanical review gate (the workflow's own requirements and any draft-only limit still apply). In LIGHT, `nemo-quality` only needs a recorded verdict. The diff's own risk sets a minimum mode.
+- After a final HUMAN_REVIEW_REQUIRED on code that differs from the run's tracked starting point, that OMP process accepts only pushes to feature branches on `origin` (not main, master or the branch named by local `origin/HEAD`; no force, delete or tags) and `gh pr create` with `--draft` or `-d` first. A human marks the PR ready and merges. An OMP restart clears this limit.
+- These checks read command text and local git refs and config, not the remote, and have known bypasses (for example `gh` pushing on its own, push URL rewrites, or a stale `origin/HEAD`). Remote branch protection and human review are the real enforcement.
 
-Before dispatch, the orchestrator retains the pre-tester Git revision, complete integrated-source snapshot's cryptographic digest and approved test/fixture path set in its **trusted session state**. Snapshots/diffs saved under `$SN` are mutable evidence/storage, not trust anchors. Immediately before acceptance and **before any** integration/auto-application, it recomputes the snapshot digest against that session-held anchor and independently generates/audits the full candidate diff, including new files. Agent-supplied digests or summaries are not authority. Modified baselines, out-of-scope production/config/agent/permission edits and auto-applied output are rejected; only independently validated test/fixture changes are applied. It records target/source/test evidence for reviewers, then runs checks after integration. Disposable targets contain only repository material, not copies of home directories, user configuration or secrets.
-
-This authorship gate is a workflow responsibility, **not an OS sandbox**. The tester and its tools are trusted same-user execution: disposable workspaces do not prevent network access or destructive side effects, and the mechanical gates below are heuristics a determined agent can evade. This inherited runtime risk requires human review for CRITICAL work.
-
-**Mechanical gates.** The SUPER-NEMO OMP extension (`lib/gate.mjs`) enforces the core rules through tool hooks instead of trusting instructions alone:
-- no agent reads or writes `.env`, key or credential files;
-- `nemo-tester` writes only test/fixture paths, implementers never write tests, and `nemo-qa` / `nemo-performance` cannot change files from the shell;
-- reviewer verdicts are recorded from their structured output and tied to the exact code state;
-- the diff's own risk sets a minimum mode (security-sensitive or risky code needs CRITICAL; config changes or larger edits need NORMAL);
-- OMP is refused once if it tries to finish with required reviews missing, and `git push` / PR creation wait until they pass (only the orchestrator may publish); after a final HUMAN_REVIEW_REQUIRED the rest of the OMP process allows only feature-branch pushes and a draft PR with `--draft` (or `-d`) as the first argument (`gh pr create --draft --title …`); this limit does not survive an OMP restart.
-
-Risky edits get a security note, a new `nemo-failures` reviewer checks changed error handling, and UI edits are linted with `impeccable detect` when it is installed.
-
-If the runtime cannot preserve trusted session state or prevent auto-application, the split is **advisory only**: human review of the full diff is required before accepting tester work, and no enforced isolation is claimed.
-
-Each diagram starts **after** you have asked OMP to change code. The orchestrator runs relevant repository checks after source and tests are integrated. Red checks and material findings go to the responsible owner: production defects to the implementer, test/fixture defects or missing coverage to the tester, with specific evidence. Tests must not be weakened to fit a production defect. Source fixes are integrated before the tester updates coverage; affected checks and failed review gates then run again. See the [full workflow](skills/super-nemo/SKILL.md) for routing and review criteria.
-
-### Stronger review prompts
-
-The [workflow](skills/super-nemo/SKILL.md#review-techniques) incorporates three techniques without adding another agent or command:
-
-| Technique | How to use it | Workflow behavior |
-| --- | --- | --- |
-| Elegant solution | “Knowing everything you know now, scrap this and implement the elegant solution.” | A default checkpoint asks whether the working patch can be simpler. Cleanup stays within scope, preserves unrelated work and goes through the existing checks and reviews. It is not permission for a wholesale rewrite. |
-| Reverse PR review | “Grill me on these changes and don't make a PR until I pass your test.” | Explicit opt-in only; otherwise the default workflow is unchanged. The agent asks diff-specific questions, explains what evidence answers need and evaluates your answers. Until your answers are satisfactory, it leaves the patch local: no commit, push or PR, including drafts, even with publication authorization or in unattended runs. No human pass is fabricated. |
-| Behavioral proof | “Prove to me this works by diffing the behavior between main and this feature branch.” | For changed runtime behavior, compare the same safe, bounded scenario with identical inputs and environment on the recorded baseline and feature snapshot in disposable local targets. Before implementation, preserve the identity and safely reconstructable state of relevant pre-existing tracked/untracked changes, excluding secrets and ignored private files. Include equivalent pre-existing state in both targets so only this task's changes are attributed to the feature; clean worktrees still use the baseline revision alone. Record snapshot/pre-task state identities, inputs/environment, exact commands, outputs and intended differences. `main` is only an example: use the project's approved baseline. If state cannot be safely captured/reconstructed or comparison is unsafe/unavailable, report the comparison unavailable and claims unproven, never substitute clean HEAD for a dirty baseline. |
-
-Passing reverse review does not replace independent reviewers or authorize publication. Documentation-only changes verify the instructions directly rather than claiming a runtime behavior difference; they do not require pre-task workspace capture for behavioral comparison.
-
-### LIGHT
-
-AUTO makes the routing judgment inline, without a separate judge agent. Clearly tiny, isolated, low-risk work uses LIGHT; concrete uncertainty about scope/risk selects the higher mode. New evidence can trigger escalation, hypothetical future scope cannot.
-
-LIGHT uses direct implementation, relevant checks and exactly one focused quality review—no advisor, dedicated tester, native reviewer or final-review agent. The review blocks only on evidence-backed material defects, not optional polish or style. Confirmed material findings get at most one fix/re-check pass, without another review cycle; unresolved defects block handoff and are reported, not labeled PASS. Preparation and evidence stay concise and limited to the affected path.
-
-```mermaid
-flowchart TD
-    A["Small, isolated change"] --> B["Implement directly"]
-    B --> C["Run relevant checks"]
-    C --> D{"Checks green?"}
-    D -- No --> B
-    D -- Yes --> E["Independent quality review"]
-    E --> F{"Fix required?"}
-    F -- Yes --> G["Fix and re-check"]
-    G --> H["Report result"]
-    F -- No --> H
-```
-
-### NORMAL
-
-```mermaid
-flowchart TD
-    A["Most code changes"] --> B["Production implementer + advisor"]
-    B --> T["Integrate source; tester writes tests and fixtures"]
-    T --> C["Integrate tests; run relevant checks"]
-    C -- Failing --> O{"Production or test defect?"}
-    O -- Production --> B
-    O -- Tests --> T
-    C -- Green --> D["Architecture + quality + read-only QA + code reviews"]
-    D --> E{"Material finding?"}
-    E -- Yes --> F{"Responsible owner fixes"}
-    F -- Production --> P["Implementer fixes; integrate source; tester updates coverage"]
-    F -- Tests --> Q["Tester fixes tests or fixtures"]
-    P --> R["Integrate tests; re-check affected paths"]
-    Q --> R
-    R -- Failing --> F
-    R -- Green --> J["Re-run failed reviews only"]
-    J --> E
-    E -- No --> G["Independent final review"]
-    G --> H["Report result"]
-```
-
-### CRITICAL
-
-```mermaid
-flowchart TD
-    A["High-risk change"] --> B["Requirements + threat sketch"]
-    B --> C["Production implementer + stronger advisor"]
-    C --> T["Integrate source; tester covers behavior, failures and abuse"]
-    T --> D["Integrate tests; checks including security"]
-    D -- Failing --> O{"Production or test defect?"}
-    O -- Production --> C
-    O -- Tests --> T
-    D -- Green --> E["Architecture + security + performance + quality + read-only QA + code reviews"]
-    E --> F{"Material finding?"}
-    F -- Yes --> G{"Responsible owner fixes"}
-    G -- Production --> P["Implementer fixes; integrate source; tester updates coverage"]
-    G -- Tests --> Q["Tester fixes tests or fixtures"]
-    P --> R["Integrate tests; re-check affected paths"]
-    Q --> R
-    R -- Failing --> G
-    R -- Green --> J["Re-run failed reviews only"]
-    J --> F
-    F -- No --> H["Independent final review"]
-    H --> I["Human review required; no automatic merge"]
-```
-
-You can choose a mode explicitly: `omp "super-nemo light: Fix the typo in the footer"` (or `normal` / `critical`). To let it choose, just describe the task; `super-nemo:` also uses automatic selection. Work happens on a non-protected branch. Changes stay local unless you explicitly authorize the primary orchestrator to commit, push and open a draft PR for a named feature branch and repository.
-
-### Build, refine, measure
-
-First get a correct working feature with the smallest sound implementation; then simplify/clean up and check architecture; then measure and optimize demonstrated bottlenecks. Correctness, security and resource constraints apply throughout—this is not permission to knowingly waste allocations or computation, and speculative optimization is not a substitute for evidence.
-
-For UI work, load an available appropriate UI skill and use earlier screenshots, designs and feedback. Before implementation, the orchestrator identifies supported affected platforms and plans a safe baseline capture. Capture the actual before state then, or from a safely reconstructable equivalent baseline preserving relevant pre-task user changes—never substitute clean HEAD for a dirty baseline. After source/test integration, verify the actual changed surface for every UI change and capture comparable after states with the same screen/flow, representative viewport/device and safe data/state. Baseline capture is the exception to the integrated-check timing rule, not permission for mid-flight checks.
-
-Substantial UI changes need before/after on each supported affected platform: web supporting desktop and mobile uses one representative viewport each; native uses one representative simulator/device per supported platform. Small visible changes use only the minimum affected surface, not a size/device/browser matrix or unchanged screens. Store images in existing evidence/artifact storage, not new tracked report folders. Report missing skills, artifacts, baseline, platform/runtime or surface access honestly; do not fabricate a before image for a new screen. Source reading and unit tests alone are not surface verification.
-
-CRITICAL always dispatches the read-only `nemo-performance` reviewer alongside architecture, security, quality, QA and native review, and includes it in the fix loop and final evidence. It requires reproducible bounded workload, baseline/changed measurements and commands, and reports missing evidence instead of inventing numbers or findings. Read-only preflight validates `modelRoles` and effective `nemo-performance` selection: `task.agentModelOverrides` takes precedence over discovered agent frontmatter, then task role/session fallback. Selection must resolve to configured, available `@advisor-critical`; only advisor-disabled installs with neither advisor role configured may use configured, available `@nemo-review`, explicitly disclosed. Missing/unavailable models, weaker mappings or unknown selection block dispatch and require user configuration through supported per-agent settings outside the run. Ordinary tasks have no per-call `model` override; the workflow never auto-edits settings or silently substitutes models.
-
-Install/update now manages `task.agentModelOverrides.nemo-performance`: advisor-enabled installs select `@advisor-critical`, and advisor-disabled installs select `@nemo-review`. Existing users must reapply with `sn update` and start a fresh OMP session. Advisor-on/off transitions use the existing managed-setting consent, drift and uninstall restoration lifecycle, not a task-time configuration repair. Missing, weaker or custom-drifted effective selections still fail preflight unless they satisfy the model contract above.
-
-The CRITICAL live smoke captures read-only native role, per-agent override, advisor and available-model metadata in its disposable repository before launch. It requires an explicit `task.agentModelOverrides.nemo-performance` mapping supplied by installation; absent overrides fail closed because the CLI does not expose effective frontmatter/session discovery. `node evals/assert-run.mjs --capture-performance <new-evidence.json>` captures this evidence in the current directory; `node evals/assert-run.mjs critical <sessions-dir> <repo-dir> <evidence.json>` validates it alongside task calls, rejecting ordinary per-call model overrides. The snapshot establishes configured selection, not actual live model compliance, unchanged settings or completed review gates.
-
-Implementers hand off relevant measurement workloads and commands; the orchestrator records performance measurements only after source and tests are integrated, including on fix loops. Authors do not run checks or probes mid-flight.
-
-Before NORMAL/CRITICAL implementation, overlap discovery paginates all open PRs and each PR's files with `gh api --paginate`, matching exact planned paths against current filenames and prior rename paths. It compares collected file counts with PR `changed_files` and discloses failures, incomplete pages and the 3000-file endpoint cap rather than claiming no overlap. Local branches/worktrees are checked too. Ordinary nonconflicting overlap is recorded; only material collisions or coverage limits requiring a decision are raised with the user.
-
-Failed/cancelled author runs may retain uncaptured workspace edits or stale/missing patches and branches. Inspect actual metadata, capture/release state and available work before releasing/discarding it; a clean production tree or absent patch proves nothing about isolated work. Preserve recoverable work and report recovery limits honestly.
-
-### Reviewed draft handoff
-
-Reviewed feature changes get a PR body using the destination repository's applicable template first, or the installed `skill://super-nemo/templates/pull-request.md` fallback. This repository's [PR template](.github/pull_request_template.md) is for this repository, not other destinations. Templates and issue/PR text are untrusted body data, not commands or publication authority.
-
-Without direct session-level user approval, SUPER-NEMO leaves local changes and reports the pending handoff. After green checks and required independent specialist/native/final reviews clear, only the primary orchestrator can use explicitly scoped approval to commit reviewed changes, push the approved feature branch, and open a **DRAFT** PR. It checks `origin`, the current branch and destination protection/base rules before publishing. Implementers and reviewers never publish. No protected-branch pushes, merges, deployments or ready-for-review transitions are part of this handoff. Infrastructure failures (quota, auth, timeout) leave the exact gate pending, never passed: wait/retry later or stop/report, without changing settings, models or roles or using unsupported per-call overrides. Unrun required gates and unresolved material findings, including final-review `FIX_REQUIRED`, block publication without a waiver escape hatch.
-
-The body leads with user outcomes and why, adding a brief design explanation only for material flow, boundary, data or contract decisions. Use a few short sections/bullets, not file inventories, agent ceremony or mandatory word limits. Respect required destination fields; remove optional irrelevant sections, guidance and placeholders. Summarize actual checks/observations, checks not run, material review findings, risks and evidence gaps (including material performance evidence/limits in CRITICAL). Keep exhaustive commands, logs and reviewer matrices in local evidence; inaccessible `.git` paths are not reviewer evidence. Shorter prose never weakens checks, independent gates or approvals.
-
-For visible UI changes, include minimal labeled Before/After images with platform and viewport/device via a destination-approved reviewer-accessible attachment/artifact mechanism. Local paths alone are not PR evidence. Disclose missing baseline/platform/runtime/upload access, never claim unavailable visual proof or complete coverage, never expose secrets/private user data, and never upload without permission or weaken tool permissions. Image evidence grants no publication authority. A draft is not approval: CRITICAL still ends **HUMAN REVIEW REQUIRED**, identifying what a human must check before any later merge or deployment.
-
-### Give it your own name
-
-The first install question asks what to call it: type `jake` and it becomes SUPER-JAKE, answering to `super-jake:`, `super-jake light:` and so on (`super-nemo` prefixes keep working). Press Enter to keep SUPER-NEMO. Without questions, pass `--name jake`; `sn install --name nemo` switches back. Updates keep the name you chose.
+If the gate module fails to load, OMP shows a warning and the rules fall back to instructions only. The hooks only see recognized tool calls and are heuristics against same-user processes, not a sandbox.
 
 ## Manage the install
 
 ```sh
-sn status       # Show installation, model choices, and changed settings
-sn verify       # Check the installation
-sn update       # Fetch updates and reapply your choices
-sn uninstall    # Remove SUPER-NEMO; restore settings where safe
+sn status      # installed state, chosen models, settings changed since install
+sn verify      # check links and skills; --smoke also runs live light + normal evals
+sn update      # fast-forward the checkout, reapply your recorded answers
+sn uninstall   # remove what install added, restore settings where safe
+sn --help      # all flags
 ```
 
-`sn verify` checks that each installed skill resolves to the shipped contents using `omp read skill://<name>:raw`; formatted line numbers and file anchors are not part of that comparison.
+Key flags:
 
-Once the scope/simplicity gate is available on your update branch, run `sn update` and start a new OMP session to load the updated instructions; existing sessions may retain earlier prompts. It does not add permissions or technically confine same-user tools.
+| Flag | Effect |
+| --- | --- |
+| `--profile <name>` | Target a different OMP profile |
+| `--dry-run` | Install/uninstall: print the plan only. Update: fetch and list new commits only |
+| `--yes` | No questions. This does **not** decide drift (see below) |
+| `--reuse` | Install: reuse recorded answers |
+| `--name <name>` | Rename the workflow to SUPER-`<NAME>`. `super-nemo` prefixes keep working |
+| `--impl`, `--fast`, `--advisor`, `--advisor-critical`, `--review` | Pick a model per role (`sel[:thinking]`) |
+| `--keep-settings` / `--overwrite-drift` | Resolve drift non-interactively. The two can't be combined |
+| `--no-smoke` | Skip the post-install live test |
+| `--pull-only` | Update: fast-forward only, don't reapply |
 
-Install creates an `~/.local/bin/sn` link to the checkout without changing shell startup files or overwriting an existing command. If `~/.local/bin` is not already on `PATH`, add `export PATH="$HOME/.local/bin:$PATH"` to your shell configuration, or keep using `~/.super-nemo/repo/sn` directly. Uninstall removes only the launcher it created; it leaves `~/.local/bin` in place even if install created that directory. If an install is interrupted after creating the command but before recording its identity, recovery leaves the command and pending state untouched rather than risk deleting an unowned replacement; inspect `~/.local/bin/sn`, move it away if appropriate, then retry.
+Exit codes: `0` ok, `1` failed, `2` bad usage, `3` drift needs a decision.
 
-Launcher cleanup is not a security boundary against another process running as your user: a hostile same-user process can replace its private temporary link between verification and deletion during uninstall. Do not run uninstall alongside untrusted same-user processes.
-
-For an installer-managed official GitHub checkout on `main`, interactive OMP sessions make a best-effort background check at most once every 24 hours and may show a notice when a newer commit is available. There are no checks in headless sessions, forks, manually cloned checkouts, or other branches. The notice uses the Git executable recorded at installation; if Git moves, rerun `~/.super-nemo/repo/sn install` from a clean checkout. The notice never installs anything: preview available commits anytime with `~/.super-nemo/repo/sn update --dry-run`, then install manually with `~/.super-nemo/repo/sn update`. Updates require a clean checkout with an upstream branch.
-
-Running the one-line installer again updates its managed checkout. `~/.super-nemo/repo/sn uninstall` asks before removing anything and keeps settings you changed yourself. Use `~/.super-nemo/repo/sn --help` for flags, including `--dry-run` to preview actions and `--profile` for a non-default OMP profile. If you cloned the repository yourself, run `./sn install` and `./sn update --dry-run` / `./sn update` from that checkout instead; these checkouts do not receive automatic notices.
-
-### Keep settings you changed
-
-When reinstalling or reapplying settings during update finds changed settings, it lists them and asks **“Keep all these changed settings? [Y/n]”**. Press Enter to preserve them all, including keys you deleted and edited settings that the new setup no longer needs. Answer no to use the existing per-setting replacement questions, each defaulting to keep. The installation summary lists the settings left alone.
-
-`sn update` reuses your recorded setup answers. With a terminal on both input and output, and without `--yes`, it can ask these drift questions only: it never asks about the name, models, setup confirmation, applying the plan, or running a live test. `sn install --reuse` likewise skips setup, apply, and live-test questions; pass `--no-smoke` to skip the live test itself. A normal interactive `sn install` still asks its setup, apply, and live-test questions.
-
-Changed settings go through the same keep/replace decision even when the checkout and installed revision are already current, including previously kept keys needed by the recorded setup and existing unmanaged eval approval. A healthy current installation with no pending settings decisions is only verified; its installation files are not rewritten. `--pull-only` skips settings reapplication and verification.
-
-For unattended use:
+**Drift.** If settings SUPER-NEMO manages were changed by hand, install and update list them and ask whether to keep them all. Without a terminal, or with `--yes`, unresolved drift exits `3`. Add `--keep-settings` (keeps your values and leaves them unmanaged) or `--overwrite-drift`. Unattended examples:
 
 ```sh
 sn update --keep-settings
 sn install --reuse --keep-settings --no-smoke
-sn install --yes --keep-settings --no-smoke
 ```
 
-`--keep-settings` skips drift questions and preserves every changed value, including unmanaged eval, without taking ownership of it. It does not suppress the other questions of a normal interactive install; use `--reuse` or `--yes` as shown above. Kept keys are left unmanaged, not recorded as new installer-owned values. Future reinstalls and updates require another keep/replace decision before managing those keys again; uninstall leaves them alone. Choosing to replace a previously kept key explicitly lets SUPER-NEMO manage it again.
+Gotchas:
 
-`--overwrite-drift` replaces changed settings instead; it is mutually exclusive with `--keep-settings`. Combining them exits 2 before installation work or update fetch. Unmanaged eval still needs the consent described above; for example, `sn install --reuse --yes --eval-approval prompt --overwrite-drift --no-smoke` explicitly adopts it as `prompt`.
+- **Eval approval and `nemo-performance` override.** An older install may already have `tools.approval.eval` or `task.agentModelOverrides.nemo-performance` set without SUPER-NEMO managing it. Those values stay unmanaged until you explicitly adopt them. Non-interactively, that takes `--overwrite-drift` (plus `--eval-approval allow|prompt` for eval).
+- **CRITICAL model check.** Before dispatching `nemo-performance`, CRITICAL checks the model it will actually get. The override wins, then the agent's frontmatter, then the session default. That model must be an available `@advisor-critical`. `@nemo-review` is allowed only when advisors are disabled and neither advisor role is configured. Install sets the override to match, but a missing, weaker or unresolvable selection blocks the run instead of repairing your config.
+- **Old prompts.** Start a new OMP session after `sn update`. Running sessions keep the old prompts.
+- **Updates.** They need a clean checkout with an upstream branch. If reapplying fails after the fast-forward, the checkout is not rolled back. Rerun with a decision flag.
+- **Update notice.** It only appears for the installer-managed checkout of the official repo on `main`, in interactive sessions, at most once every 24 hours. It never installs anything.
+- **Launcher.** Uninstall removes `~/.local/bin/sn` only if install created it. If install was interrupted, inspect the file yourself.
 
-`--yes` suppresses all questions, including on update; it does **not** imply either keep or overwrite. Without a terminal (or with `--yes`), unresolved drift still exits 3: choose `--keep-settings`, explicitly choose replacement, or retry in a terminal without `--yes`. Update forwards `--yes`, `--keep-settings`, and `--overwrite-drift` to the reused install. If update already fast-forwarded but reapplication stopped, rerun it with the appropriate decision flag; the checkout is not rolled back.
+## Repository layout
 
-Install `--dry-run` shows the chosen keep/replace plan and summary without applying it. Update `--dry-run` only fetches and lists commits, without reapplying settings or asking drift questions. Cancelling an install question before application writes no installation changes; cancelling drift questions during update does not undo a fast-forward already performed.
+| Path | Contents |
+| --- | --- |
+| `skills/super-nemo/` | The workflow ([`SKILL.md`](skills/super-nemo/SKILL.md)) and the fallback PR template |
+| `skills/nemo-*-review/`, `skills/super-nemo-security-review/` | Review skills used by the reviewer agents |
+| `agents/` | Implementer, tester and reviewer agent definitions |
+| `extensions/super-nemo.js` | OMP extension: mechanical gates and the update notice |
+| `standards/ENGINEERING.md`, `blocks/AGENTS.md` | Engineering baseline and the block installed into `AGENTS.md` |
+| `watchdog/` | Advisor guidance (`WATCHDOG.md`/`.yml`) |
+| `config/deny-patterns.json` | Bash allow/deny patterns added to OMP config |
+| `sn`, `install.sh`, `lib/` | CLI and installer (`lib/sn.mjs` entry point) and gate logic |
+| `test/`, `evals/` | Unit tests and live smoke evals |
+| `.github/pull_request_template.md` | PR template for *this* repo only |
 
-**Costs and safety:** Reviews and the optional live test make model calls, which can incur API charges. The fresh-install YOLO default removes OMP command approval prompts. If you accept eval auto-approval, it applies even with `--approval write` or `--approval always-ask`: eval can execute local code with access to your files and processes without asking first. Choose no at the eval question or pass `--eval-approval prompt` to require eval confirmation. Command deny rules are *not a sandbox*, and a project-level OMP config can replace them. Review commands and permissions before using this on a sensitive project. See the [workflow](skills/super-nemo/SKILL.md) for the full mode rules.
-
-## Local Linear automation (macOS)
-
-The standalone daemon polls Linear every 30–60 seconds (45 by default) and processes only issues with the **exact `auto-implement` label** in an explicitly mapped project. Issue descriptions and all comments are untrusted task context, never configuration. Repository paths and GitHub destinations come only from the operator's allowlist; the repository origin must match it. Automation is **PR-only**: a branch and pull request are the handoff, not permission to merge, deploy, destroy data/infrastructure, or access secrets. **Human review is required** before merging.
-
-### Prepare one configuration
-
-Use Node.js 20+, Git, GitHub CLI authenticated for the allowed repositories, and an absolute executable path to OMP. Run `omp login` for your selected model providers, then install and verify SUPER-NEMO with `sn install` and `sn verify`. If using an OMP profile, configure provider login and SUPER-NEMO in that same profile (`sn install --profile <name>`); set `profile` in the daemon configuration. Provider credentials remain in OMP's external profile, separate from the Linear token.
-
-Look up each project's actual UUID in Linear (project details/API or the Linear integration's project lookup). Do not use the project name, issue identifier, or a guessed ID. The following **three initial mapping examples** are placeholders: replace all UUIDs, both operator-selected repository paths, all GitHub destinations, and the executable path before use. AI Demo's example repository is `/Users/glumac/coding/ai-operations-agent-demo`; Super-Nemo and Portfolio require the operator's actual local checkout paths.
-
-```json
-{
-  "stateDir": "/Users/glumac/.super-nemo/linear-state",
-  "tokenFile": "/Users/glumac/.config/super-nemo/linear-token",
-  "pollSeconds": 45,
-  "allowPublish": true,
-  "ghPath": "/opt/homebrew/bin/gh",
-  "ompPath": "/absolute/path/to/omp",
-  "projects": {
-    "11111111-1111-4111-8111-111111111111": {
-      "name": "AI Demo",
-      "repo": "/Users/glumac/coding/ai-operations-agent-demo",
-      "github": "YOUR_OWNER/YOUR_AI_DEMO_REPO"
-    },
-    "22222222-2222-4222-8222-222222222222": {
-      "name": "Super-Nemo",
-      "repo": "/absolute/operator-selected/super-nemo",
-      "github": "Glumac7/super-nemo"
-    },
-    "33333333-3333-4333-8333-333333333333": {
-      "name": "Portfolio",
-      "repo": "/absolute/operator-selected/portfolio",
-      "github": "YOUR_OWNER/YOUR_PORTFOLIO_REPO"
-    }
-  }
-}
-```
-
-Keep the configuration, token, state, logs, and OMP profile **outside every repository/worktree**. Use owner-only directories (`0700`) and owner-only regular files (`0600`) for configuration and token; the token file must belong to your user, must not be a symlink, and is opened without following symlinks. Create the token through a trusted secret-management tool/editor rather than putting it in shell history or command arguments. Never commit it. The persistent daemon requires `tokenFile`; do **not** put a token in a plist, environment block, or `launchctl setenv`. The daemon reads it privately and does not forward it into the agent environment.
-
-For example, prepare the directory and save the configuration as `~/.config/super-nemo/linear.json`:
+## Development
 
 ```sh
-umask 077
-mkdir -p "$HOME/.config/super-nemo"
-chmod 700 "$HOME/.config/super-nemo"
-# Save linear.json and linear-token privately using your trusted editor/tool.
-chmod 600 "$HOME/.config/super-nemo/linear.json" "$HOME/.config/super-nemo/linear-token"
+npm ci
+npm test                      # node --test
+evals/smoke.sh light          # live eval in a throwaway repo: light|normal|critical|auto|implicit|question
 ```
 
-Use **one configuration and one daemon per macOS user**, containing all project mappings. The canonical registry/lock in `~/.super-nemo/linear-control` is independent of `stateDir`; a different configuration/state root is rejected until explicit uninstall. Do not copy/delete the registry, locks, or claims to bypass serialization.
-
-### Run and operate
-
-From the SUPER-NEMO checkout, with an absolute configuration path:
-
-```sh
-node lib/linear-cli.mjs status --config "$HOME/.config/super-nemo/linear.json"
-node lib/linear-cli.mjs once --config "$HOME/.config/super-nemo/linear.json"
-node lib/linear-cli.mjs run --config "$HOME/.config/super-nemo/linear.json"
-```
-
-`once` is a real processing pass, not a dry run: it can start paid agents and produce PRs. `run` polls continuously. Do not run another copy alongside it. The durable claim is recorded before side effects and launch intent before spawn. Execution is serialized; accepted tasks run with the `super-nemo:` workflow prefix from a private nonprotected Git worktree.
-
-`allowPublish: true` is the trusted operator's explicit authorization to commit and push **only the generated nonprotected branch** and open a ready PR to that project's configured GitHub repository. GitHub CLI (`gh`) authentication is required; PR metadata must match the branch and head. It never authorizes merge or deploy. This option defaults to `false`, which retains a local branch instead of publishing a PR. Human review must still inspect the PR and verification evidence.
-
-Set `ghPath` to your actual absolute executable path (for example `/usr/local/bin/gh` on Intel Homebrew instead of the Apple Silicon example), and authenticate it with `gh auth login` outside repositories. When publishing is authorized, the agent's minimal `PATH` includes the directory of that configured executable; it also includes the daemon's Node runtime directory so an OMP launcher using `/usr/bin/env node` can start under launchd. It does not inherit your interactive shell's `PATH` or environment. The publisher verifies PR destination, generated branch/head and ready status, but that metadata is not independent proof that verification checks passed.
-
-Configured OMP/GitHub executables must resolve to regular executable files owned by your user or root, without group/world write permissions, under trusted parent directories. The runner revalidates them before execution. User-controlled symlinked parent directories are rejected; a trusted final executable symlink can resolve to a validated target.
-
-**A private worktree is not a sandbox.** OMP runs as your user and can access other same-user files, processes, network, and provider credentials. The automation's prompt restrictions and minimal child environment are not hard isolation. Review OMP/profile permissions, repository-local settings, command approvals, and account scope before applying the label to untrusted content. Keep valuable secrets away from that account or use an independently configured OS sandbox/account.
-
-To install a persistent user LaunchAgent:
-
-```sh
-node lib/linear-cli.mjs install --config "$HOME/.config/super-nemo/linear.json"
-```
-
-Install records absolute Node/CLI/config arguments in an owner-only plist under `~/Library/LaunchAgents`, with a stable config-derived `com.super-nemo.linear.<hash>` label, `RunAtLoad` and `KeepAlive`. Logs are private files in `<stateDir>/launchd`. It never overwrites an existing plist. Install holds the canonical control-plane lock through plist creation and bootstrap; the service may initially fail to acquire the lock, then `KeepAlive` retries after install releases it. Bootstrap and bootout target only your `gui/<uid>` service, never the system domain or unrelated jobs. Keep this checkout and Node executable at their installed absolute paths; uninstall before moving/updating those paths or changing the configuration's state location. On bootstrap failure the owned plist and registration remain for explicit inspection/recovery.
-
-Progress and terminal notifications are durable bounded outbox entries. Network failures retry **notifications only**, using deterministic comment markers to recover an uncertain post without launching the task again:
-
-```sh
-node lib/linear-cli.mjs retry --config "$HOME/.config/super-nemo/linear.json"
-node lib/linear-cli.mjs status --config "$HOME/.config/super-nemo/linear.json"
-```
-
-Linear comments contain controlled status and verified branch/PR metadata, not copied issue text or raw agent output. Retained private task logs provide verification details; inspect locally and redact before sharing.
-
-### Recovery and uninstall
-
-Execution is **at most once**, not guaranteed completion. A crash in claimed/preparing/launch-intent/running state becomes `interrupted-in-doubt` and is never automatically relaunched. Failed/interrupted issues remain actionable for human investigation. `retry` cannot retry execution. Restarting, removing/reapplying the label, or uninstalling does not erase claims.
-
-```sh
-node lib/linear-cli.mjs uninstall --config "$HOME/.config/super-nemo/linear.json"
-```
-
-Uninstall holds the control-plane lock through scoped bootout, removal of its unchanged owned plist, and registration release. It refuses an active/ambiguous lock **before any service or plist changes**. Stop the exact installed service first with `launchctl bootout "gui/$(id -u)/<label>"` (replace `<label>` with the label reported by install), and confirm the poller and all agent descendants have stopped. Never stop unrelated services. Uninstall preserves all state, claims, logs, branches and worktrees. A missing plist is **not proof** that its job is stopped: uninstall still attempts scoped bootout. If bootout fails, it releases registration only when a separate `launchctl print` probe reports the exact scoped service as absent; all other failures preserve registration. A failed bootstrap/bootout may require manual scoped service inspection before another uninstall.
-
-For an interrupted/uncertain execution, inspect `status`, the retained worktree, branch, logs and PR. Only after confirming the poller **and all agent descendants** have stopped, explicitly acknowledge that issue using its full Linear UUID:
-
-```sh
-node lib/linear-cli.mjs acknowledge --config "$HOME/.config/super-nemo/linear.json" --issue "<issue-UUID>" --confirm-stopped
-node lib/linear-cli.mjs retry --config "$HOME/.config/super-nemo/linear.json"
-node lib/linear-cli.mjs status --config "$HOME/.config/super-nemo/linear.json"
-```
-
-`--confirm-stopped` is your assertion that **all** relevant processes are stopped, not an automatic process check; PID absence/reuse alone is insufficient evidence. Acknowledgement durably records `acknowledged-interruption`, queues a terminal notification and clears the matching interrupted lock; it never reruns the issue. `retry` delivers notifications only. Do not manually delete locks, registration or claims to bypass recovery or trigger another execution. A lock without a matching interrupted issue cannot be recovered with this command; retain it and investigate rather than guessing an issue UUID. Uninstall does not revoke your Linear token or OMP/GitHub login: revoke credentials separately with their providers if retiring the automation.
+Smoke evals call real models, cost money and run `omp` in YOLO mode inside a temp repo. `sn verify --smoke` runs the light and normal ones.
