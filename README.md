@@ -95,62 +95,6 @@ Gotchas:
 - **Update notice.** It only appears for the installer-managed checkout of the official repo on `main`, in interactive sessions, at most once every 24 hours. It never installs anything.
 - **Launcher.** Uninstall removes `~/.local/bin/sn` only if install created it. If install was interrupted, inspect the file yourself.
 
-## Linear automation (macOS, optional)
-
-A standalone daemon polls Linear (every 30–60 s, default 45). It picks up issues carrying the exact label `auto-implement` in explicitly mapped projects. Each one runs as a **`super-nemo critical:`** task in a private worktree on a new `linear/auto-<issue-uuid>` branch. Issue text is untrusted task input, never configuration.
-
-Before using it:
-
-- Run `omp login`, `sn install` and `sn verify` in the same OMP profile the config names (`--profile <name>`), or omit `profile` to use the default.
-- Create the token file with a trusted editor or secret manager, not shell history or command arguments.
-- Authenticate `gh` if you will publish.
-
-Config (`~/.config/super-nemo/linear.json`):
-
-```json
-{
-  "stateDir": "/Users/you/.super-nemo/linear-state",
-  "tokenFile": "/Users/you/.config/super-nemo/linear-token",
-  "ompPath": "/absolute/path/to/omp",
-  "pollSeconds": 45,
-  "allowPublish": false,
-  "ghPath": "/opt/homebrew/bin/gh",
-  "profile": "optional-omp-profile",
-  "projects": {
-    "<linear-project-uuid>": { "name": "My App", "repo": "/absolute/path/to/repo", "github": "owner/repo" }
-  }
-}
-```
-
-Requirements (checked when the config loads, when the token is read, or when a task is prepared):
-
-- Config, token, state and control directory all live outside every mapped repo, and the token lives outside `stateDir`.
-- The config is a single-link `0600` file you own. The token is a `0600` file you own, not a symlink, at most 8 KiB. Never put the token in a plist or the environment.
-- `ompPath` and `ghPath` are absolute, trusted (owned by you or root, not group- or world-writable, under trusted parent directories) executables. `ghPath` is only needed when `allowPublish` is true.
-- Project keys are real Linear project UUIDs, not names or guesses. The repo path must be the repository root, and its origin must match `github`.
-- `allowPublish` defaults to `false`, which leaves a local branch. When `true`, the daemon asks the agent to push and open one **ready (non-draft)** PR, then verifies that PR's repo, branch and head. It never merges or deploys.
-
-> [!CAUTION]
-> **`allowPublish` conflicts with the workflow.** The daemon expects a ready PR, but the CRITICAL workflow it requests allows only a **draft** PR and forbids marking it ready. Expect publication to fail verification. Keep `allowPublish: false` until the two agree. This is untested end to end.
-
-```sh
-C="$HOME/.config/super-nemo/linear.json"
-node lib/linear-cli.mjs status    --config "$C"
-node lib/linear-cli.mjs once      --config "$C"   # real pass: may launch paid agents and open PRs
-node lib/linear-cli.mjs run       --config "$C"   # poll continuously
-node lib/linear-cli.mjs retry     --config "$C"   # resend pending Linear comments only
-node lib/linear-cli.mjs install   --config "$C"   # LaunchAgent com.super-nemo.linear.<hash>, logs in <stateDir>/launchd
-node lib/linear-cli.mjs uninstall --config "$C"
-node lib/linear-cli.mjs acknowledge --config "$C" --issue "$ISSUE_UUID" --confirm-stopped
-```
-
-Operational rules:
-
-- **One daemon per macOS user.** The control lock in `~/.super-nemo/linear-control` serializes work. Never delete locks, claims or registration by hand.
-- **At-most-once execution.** After a crash, recovery marks the issue `interrupted-in-doubt`, and it is never relaunched automatically. `status` may show the last active state until recovery runs. Agents run in a detached process group. Stop the exact LaunchAgent, independently confirm the poller **and every agent descendant** have stopped, and inspect the branch, worktree and logs. Then `acknowledge` that issue's full UUID. A lock with no matching interrupted issue can't be acknowledged: investigate it, don't guess. `retry` never re-executes a task.
-- **Install and uninstall.** The LaunchAgent stores absolute paths, so uninstall it before moving the checkout, Node or `stateDir`. Uninstall refuses while the lock is active: run `launchctl bootout "gui/$(id -u)/<label>"` first, using the label install reported. It keeps state, logs, branches and worktrees.
-- **Not a sandbox.** The worktree isolates nothing: OMP runs as your user with your files, network and provider credentials. Don't label untrusted content on an account that holds valuable secrets. Uninstall doesn't revoke the Linear token or your `gh`/OMP logins.
-
 ## Repository layout
 
 | Path | Contents |
@@ -162,7 +106,7 @@ Operational rules:
 | `standards/ENGINEERING.md`, `blocks/AGENTS.md` | Engineering baseline and the block installed into `AGENTS.md` |
 | `watchdog/` | Advisor guidance (`WATCHDOG.md`/`.yml`) |
 | `config/deny-patterns.json` | Bash allow/deny patterns added to OMP config |
-| `sn`, `install.sh`, `lib/` | CLI and installer (`lib/sn.mjs` entry point), gate logic, Linear daemon (`lib/linear-*.mjs`) |
+| `sn`, `install.sh`, `lib/` | CLI and installer (`lib/sn.mjs` entry point) and gate logic |
 | `test/`, `evals/` | Unit tests and live smoke evals |
 | `.github/pull_request_template.md` | PR template for *this* repo only |
 
