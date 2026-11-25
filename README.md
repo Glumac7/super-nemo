@@ -40,16 +40,19 @@ Change requests trigger the workflow automatically. Questions and code reading d
 
 Rules that hold in every mode:
 
-- Work happens on a non-protected branch, and changes stay local. Only an explicit request in the session lets the orchestrator commit, push the feature branch and open a **draft** PR. It never merges, deploys or marks a PR ready.
-- Authors never approve their own work. Implementers own production code, and the tester writes only tests and fixtures, in a disposable copy of the integrated source.
-- Infrastructure failures (quota, auth, timeout) leave a gate *not run*, never passed.
+- **Scope contract.** Before work, the orchestrator records the requested outcome, acceptance criteria, non-goals and allowed production/test paths. Agents can't widen it. Material changes to the outcome, architecture, security risk or public contracts need your decision.
+- **Approach check** (NORMAL/CRITICAL). Before implementing, the orchestrator asks whether a simpler sound approach reaches the same outcome. It asks again when an assumption fails or new repositories, dependencies or contracts become necessary. CRITICAL also repeats it before costly or hard-to-reverse steps.
+- **Separate authorship.** Authors never approve their own work. In NORMAL/CRITICAL, implementers own production code. After the source is integrated, `nemo-tester` writes only allowlisted tests and fixtures, in a disposable copy of that exact source. The orchestrator verifies the source snapshot is unchanged and applies only validated test changes. This is a workflow rule, not an OS sandbox.
+- **Local by default.** Work happens on a non-protected branch, and changes stay local. Only an explicit request in the session lets the orchestrator commit, push the feature branch and open a **draft** PR. It never merges, deploys or marks a PR ready.
+- **Gates not run.** Infrastructure failures (quota, auth, timeout) leave a gate *not run*, never passed.
 
 **Mechanical gates** ([`lib/gate.mjs`](lib/gate.mjs), loaded by the extension) back up a narrower subset of these rules through OMP tool hooks:
 
 - No agent may read or write `.env`, key, `.npmrc`/`.netrc` or credential files. This includes this repo's own `.npmrc`.
 - Per-role write limits apply. Testers write only test paths, implementers never write tests, and `nemo-qa`/`nemo-performance` can't change files from the shell.
-- Only the final review's PASS has to match the current working-tree fingerprint. Other specialists just need their latest verdict to be PASS. The diff's own risk sets a minimum mode.
-- `git push` and `gh pr create` are refused while tracked reviews are open. In LIGHT, `nemo-quality` only has to have run. The native `reviewer` is not tracked.
+- `git push` and `gh pr create` are refused until the hook's recorded reviews clear. In NORMAL/CRITICAL it checks each required reviewer's last recorded receipt: the final review's must be PASS or HUMAN_REVIEW_REQUIRED on the current code, and the others' must be PASS. A verdict is only skipped as a repeat when the same reviewer, verdict and code state were already recorded, so a fix that gets re-reviewed is recorded again; it doesn't replace the workflow's own review requirements. Docs-only changes open no mechanical review gate (the workflow's own requirements and any draft-only limit still apply). In LIGHT, `nemo-quality` only needs a recorded verdict. The diff's own risk sets a minimum mode.
+- After a final HUMAN_REVIEW_REQUIRED on code that differs from the run's tracked starting point, that OMP process accepts only pushes to feature branches on `origin` (not main, master or the branch named by local `origin/HEAD`; no force, delete or tags) and `gh pr create` with `--draft` or `-d` first. A human marks the PR ready and merges. An OMP restart clears this limit.
+- These checks read command text and local git refs and config, not the remote, and have known bypasses (for example `gh` pushing on its own, push URL rewrites, or a stale `origin/HEAD`). Remote branch protection and human review are the real enforcement.
 
 If the gate module fails to load, OMP shows a warning and the rules fall back to instructions only. The hooks only see recognized tool calls and are heuristics against same-user processes, not a sandbox.
 
